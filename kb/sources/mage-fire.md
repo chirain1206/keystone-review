@@ -4,7 +4,7 @@ spec: Fire
 dungeon: "*"
 patch: 12.1
 type: intent_pattern
-source_url: https://bbs.nga.cn/read.php?tid=46306031&rand=899
+source_url: https://bbs.nga.cn/read.php?tid=46253415
 ---
 
 # 火焰法师打法要点（至暗之夜 12.1 / 大秘境 S2）
@@ -53,7 +53,7 @@ Grim Batol 的龙怪波次需要坦克长距离拉怪，火焰法师在此期间
 
 ## 补丁变动：12.1 对火焰法师的影响
 
-12.1 版本 Pyroblast 基础伤害上调、Phoenix Flames 充能时间缩短，Hot Streak 触发链收益提高；旧版"全程硬读 Fireball"的打法已过时，应围绕瞬发链重构输出循环。
+12.1 版本对火焰法师的瞬发技能（Pyroblast / Phoenix Flames）做了一系列平衡性调整，Hot Streak 触发链的整体收益有所变化；旧版"全程硬读 Fireball"的打法已不再是最优解，应围绕瞬发链重构输出循环。具体数值以当期官方补丁说明（蓝贴）为准。
 
 ## 通用原理（跨版本）：火焰法师的输出节奏
 

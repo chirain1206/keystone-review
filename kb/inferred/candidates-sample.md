@@ -4,7 +4,7 @@ spec: Beast Mastery
 dungeon: "*"
 patch: 12.1
 type: intent_pattern
-source_url: https://wow-analyzer.local/inferred/pet-preposition
+source_url: internal:inference
 ---
 
 # log 推断候选条目（origin=inferred, status=candidate，绝不注入正式分析）
