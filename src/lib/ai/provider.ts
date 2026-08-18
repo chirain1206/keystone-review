@@ -1,5 +1,6 @@
 import { envConfig } from "@/lib/env";
 import { estimateTokens } from "@/lib/ai/tokens";
+import { runIntentEngine } from "@/lib/ai/intent-engine";
 
 /**
  * AI 适配层（T5）。
@@ -127,79 +128,13 @@ class DeepSeekProvider implements AiProvider {
 
 // ---------- Mock ----------
 
-interface MockIntentCase {
-  key: string;
-  explain: string;
-}
+// ---------- Mock ----------
 
 /**
- * FR-5 规则样例（T5 先行内置 2 例，T6 扩展为完整样例集 + 评测脚本）：
- * 对"看似失误实为正确决策"的关键模式做确定性判定。
+ * mock 模式的 FR-5 判定由意图引擎（T6）提供：
+ * 报告第 4 章列"失误"判定，第 5 章列"正确决策"判定。
+ * 真实模型走第 5 章提示词的完整规则（与引擎口径一致）。
  */
-export function detectIntentCases(log: {
-  aggregate: {
-    cooldowns: { t: number; spell?: string; actor?: string; note?: string }[];
-    vulnerablePhases: { start: number; end: number; note?: string }[];
-    deaths: { t: number; actor?: string }[];
-    interrupts: { t: number; spell?: string }[];
-  };
-}): MockIntentCase[] {
-  const cases: MockIntentCase[] = [];
-  const { cooldowns, vulnerablePhases, deaths, interrupts } = log.aggregate;
-
-  // 案例 1：无爆发窗口喝爆发药水，但 300±15s 后存在易伤阶段 → 对齐易伤的意图决策
-  // 只取"使用药水"的施放事件（AURA 获得/结束为同一瓶药水的伴随事件，不重复判定）
-  const potions = cooldowns.filter(
-    (c) => c.spell?.toLowerCase().includes("potion") && (c.note ?? "").includes("药水"),
-  );
-  const majorBursts = cooldowns.filter(
-    (c) => !c.spell?.toLowerCase().includes("potion") && (c.note ?? "").includes("获得增益"),
-  );
-  for (const p of potions) {
-    const nearBurst = majorBursts.some((b) => Math.abs(b.t - p.t) <= 25);
-    const alignsVuln = vulnerablePhases.some(
-      (v) => v.start - p.t >= 240 && v.start - p.t <= 360,
-    );
-    if (!nearBurst && alignsVuln) {
-      const v = vulnerablePhases.find((x) => x.start - p.t >= 240 && x.start - p.t <= 360)!;
-      cases.push({
-        key: "potion-align-vulnerable",
-        explain: `在 ${fmt(p.t)} 无爆发增益时使用 ${p.spell}，看似浪费：但本场 ${fmt(v.start)} 起存在 BOSS 易伤阶段（${v.note ?? "易伤"}），药水 30 秒增益窗口覆盖该阶段，属于"留资源对齐易伤"的意图决策，判断为正确操作。`,
-      });
-    }
-  }
-
-  // 案例 2：易伤阶段前 8 秒内（±2s 容差）开启爆发 → 留爆发的意图决策
-  for (const b of majorBursts) {
-    const rightBefore = vulnerablePhases.some(
-      (v) => v.start - b.t >= -2 && v.start - b.t <= 8,
-    );
-    if (rightBefore) {
-      cases.push({
-        key: "hold-burst-for-vuln",
-        explain: `在 ${fmt(b.t)} 开启 ${b.spell ?? "爆发技能"}，紧贴易伤阶段开启时间：这是把爆发对齐易伤窗口的规划，判断为正确决策。`,
-      });
-    }
-  }
-
-  // 真实失误样例：爆发开启后 15 秒内无任何施放记录且无死亡/打断 → 空转
-  for (const b of majorBursts) {
-    const castsNear = cooldowns.some(
-      (c) => c !== b && Math.abs(c.t - b.t) <= 15 && c.spell !== b.spell,
-    );
-    const diedNear = deaths.some((d) => d.t >= b.t && d.t <= b.t + 15);
-    if (!castsNear && !diedNear && majorBursts.length === 1) {
-      cases.push({
-        key: "wasted-burst",
-        explain: `${fmt(b.t)} 开启 ${b.spell ?? "爆发"} 后 15 秒内无其他技能记录，疑似爆发期空转，应列入"可改进点"。`,
-      });
-    }
-  }
-
-  void interrupts;
-  return cases;
-}
-
 function fmt(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
@@ -228,7 +163,17 @@ class MockAiProvider implements AiProvider {
     const chapterNo = chapterMatch ? Number(chapterMatch[1]) : 1;
 
     // 从 user 内容提取结构化数据（管线注入的 JSON 片段）
-    let log: { combat?: { dungeon?: string; level?: number; playerName?: string; playerClass?: string; success?: boolean; durationSec?: number }; aggregate?: { interrupts?: { t: number; spell?: string }[]; deaths?: { t: number; actor?: string }[]; cooldowns?: { t: number; spell?: string; note?: string; actor?: string }[]; vulnerablePhases?: { start: number; end: number; note?: string }[]; perMinute?: { damage?: number; heal?: number }[] } } = {};
+    let log: {
+      combat?: { dungeon?: string; level?: number; playerName?: string; playerClass?: string; success?: boolean; durationSec?: number };
+      aggregate?: {
+        interrupts?: { t: number; spell?: string }[];
+        deaths?: { t: number; actor?: string }[];
+        cooldowns?: { t: number; spell?: string; note?: string; actor?: string }[];
+        vulnerablePhases?: { start: number; end: number; note?: string }[];
+        movement?: { t: number; spell?: string }[];
+        perMinute?: { damage?: number; heal?: number }[];
+      };
+    } = {};
     const jsonMatch = /```json\n([\s\S]*?)\n```/.exec(user) ?? /(\{[\s\S]*"aggregate"[\s\S]*\})/.exec(user);
     if (jsonMatch) {
       try {
@@ -249,7 +194,23 @@ class MockAiProvider implements AiProvider {
     const vuln = agg.vulnerablePhases ?? [];
     const totalDmg = (agg.perMinute ?? []).reduce((s, b) => s + (b.damage ?? 0), 0);
 
-    const intentCases = detectIntentCases({ aggregate: agg as never });
+    const verdicts = runIntentEngine({
+      combat: {
+        durationSec: combat.durationSec ?? 0,
+        dungeon: dungeon,
+        level,
+        playerName: player,
+      },
+      aggregate: {
+        cooldowns,
+        vulnerablePhases: vuln,
+        deaths,
+        interrupts,
+        movement: agg.movement ?? [],
+      },
+    });
+    const intentVerdicts = verdicts.filter((v) => v.verdict === "intent");
+    const mistakeVerdicts = verdicts.filter((v) => v.verdict === "mistake");
 
     const lines: string[] = [];
     switch (chapterNo) {
@@ -289,38 +250,47 @@ class MockAiProvider implements AiProvider {
       case 3:
         lines.push("未提供对比链接，本场无对比章节（FR-3：未粘贴则不显示本章）。");
         break;
-      case 4:
+      case 4: {
         lines.push("可改进点清单：");
-        if (deaths.length > 0) {
+        let idx = 0;
+        for (const m of mistakeVerdicts) {
+          idx++;
+          lines.push(`${idx}. 现象：${m.explain}（证据如上）建议：针对该时间点复盘操作规划，制定对应改进动作。`);
+        }
+        // 补充：非机制期的死亡也单列
+        for (const d of deaths) {
+          const inVuln = vuln.some((v) => d.t >= v.start && d.t <= v.end);
+          if (!inVuln && !mistakeVerdicts.some((m) => m.atSec === d.t)) {
+            idx++;
+            lines.push(
+              `${idx}. 现象：战斗中期出现玩家死亡。证据：${fmt(d.t)} ${d.actor ?? ""} 死亡。建议：复盘该时间点减伤覆盖与治疗资源规划，避免关键机制期减员。`,
+            );
+          }
+        }
+        if (interrupts.length < 2 && !mistakeVerdicts.some((m) => m.key === "zero-interrupts")) {
+          idx++;
           lines.push(
-            `1. 现象：战斗中期出现玩家死亡。证据：${deaths.map((d) => `${fmt(d.t)} ${d.actor ?? ""} 死亡`).join("；")}。建议：复盘该时间点减伤覆盖与治疗资源规划，避免关键机制期减员。`,
+            `${idx}. 现象：本场打断次数偏低。证据：全场仅记录到少量打断事件。建议：与队伍约定打断分工，优先打断高危读条（如治疗类与群控类技能）。`,
           );
         }
-        if (intentCases.some((c) => c.key === "wasted-burst")) {
-          lines.push(
-            `2. 现象：爆发期空转。证据：${intentCases.find((c) => c.key === "wasted-burst")!.explain} 建议：爆发前确认目标存活与资源到位，爆发期内保持技能循环不间断。`,
-          );
-        }
-        if (interrupts.length < 2) {
-          lines.push(
-            "3. 现象：本场打断次数偏低。证据：全场仅记录到少量打断事件。建议：与队伍约定打断分工，优先打断高危读条（如治疗类与群控类技能）。",
-          );
-        }
-        if (lines.length === 1) {
+        if (idx === 0) {
           lines.push("1. 未发现明显的可改进点，保持现有节奏，可关注爆发对齐的细节（见第 5 章）。");
         }
         break;
+      }
       case 5: {
         lines.push("战术意图识别：");
-        const good = intentCases.filter((c) => c.key !== "wasted-burst");
-        if (good.length > 0) {
-          for (const c of good) lines.push(`- ✅ 正确决策：${c.explain}`);
+        if (intentVerdicts.length > 0) {
+          for (const v of intentVerdicts) {
+            lines.push(`- ✅ 正确决策（${v.atSec !== undefined ? fmt(v.atSec) : "—"}）：${v.explain}`);
+          }
         } else {
           lines.push("- 本场未发现「看似异常实为正确决策」的样本操作。");
         }
-        const wasted = intentCases.filter((c) => c.key === "wasted-burst");
-        if (wasted.length > 0) {
-          lines.push(`- ⚠️ 真实失误：${wasted[0].explain}`);
+        if (mistakeVerdicts.length > 0) {
+          lines.push(
+            `- 另有 ${mistakeVerdicts.length} 处真实失误（如 ${mistakeVerdicts[0].atSec !== undefined ? fmt(mistakeVerdicts[0].atSec) : "全程"}），已列入第 4 章「可改进点」，不归入本章。`,
+          );
         }
         break;
       }

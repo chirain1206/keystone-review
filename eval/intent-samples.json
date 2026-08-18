@@ -1,0 +1,264 @@
+{
+  "$comment": "FR-5 战术意图识别验收样例集（T6）：≥10 个「看似失误实为正确决策」意图案例 + ≥5 个真实失误案例。每个样例含预期判定 verdict 与预期模式 key，QA 阶段用 eval/intent-eval.ts 批量评测（真实模型通过率 ≥80% 放行）。事件坐标 t 为相对战斗开始的秒数。",
+  "samples": [
+    {
+      "id": "intent-01",
+      "title": "无爆发时喝爆发药水，对齐 5 分钟后 BOSS 易伤（PRD FR-5 经典案例：5:36）",
+      "verdict": "intent",
+      "expectedKey": "potion-align-vulnerable",
+      "combat": { "dungeon": "Mists of Tirna Scithe", "level": 15, "durationSec": 700, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 336, "spell": "Elemental Potion of Ultimate Power", "note": "使用药水", "actor": "Mymage" }
+        ],
+        "vulnerablePhases": [{ "start": 636, "end": 671, "note": "Vulnerable" }],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "intent-02",
+      "title": "爆发压着易伤阶段开启（留爆发）",
+      "verdict": "intent",
+      "expectedKey": "hold-burst-for-vuln",
+      "combat": { "dungeon": "Grim Batol", "level": 12, "durationSec": 500, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 120, "spell": "Combustion", "note": "获得增益", "actor": "Mymage" }
+        ],
+        "vulnerablePhases": [{ "start": 122, "end": 150, "note": "Vulnerable" }],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "intent-03",
+      "title": "机制前 3 秒提前开减伤（提前减伤）",
+      "verdict": "intent",
+      "expectedKey": "defensive-before-phase",
+      "combat": { "dungeon": "The Stonevault", "level": 10, "durationSec": 400, "playerName": "Tankwar" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 95, "spell": "Shield Wall", "note": "减伤", "actor": "Tankwar" }
+        ],
+        "vulnerablePhases": [{ "start": 98, "end": 128, "note": "Enrage" }],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "intent-04",
+      "title": "预铺减伤覆盖机制期且零死亡",
+      "verdict": "intent",
+      "expectedKey": "pre-defensive-no-death",
+      "combat": { "dungeon": "The Stonevault", "level": 10, "durationSec": 400, "playerName": "Tankwar" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 96, "spell": "Icebound Fortitude", "note": "减伤", "actor": "Tankwar" }
+        ],
+        "vulnerablePhases": [{ "start": 100, "end": 130, "note": "Erupting" }],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "intent-05",
+      "title": "20 秒内连续 3 次打断（打断链/控链规划）",
+      "verdict": "intent",
+      "expectedKey": "interrupt-chain",
+      "combat": { "dungeon": "Ara-Kara, City of Echoes", "level": 8, "durationSec": 600, "playerName": "Roguex" },
+      "aggregate": {
+        "cooldowns": [],
+        "vulnerablePhases": [],
+        "deaths": [],
+        "interrupts": [
+          { "t": 100, "spell": "Web Bolt", "actor": "Roguex" },
+          { "t": 108, "spell": "Venom Volley", "actor": "Roguex" },
+          { "t": 115, "spell": "Web Bolt", "actor": "Roguex" }
+        ],
+        "movement": []
+      }
+    },
+    {
+      "id": "intent-06",
+      "title": "全部爆发都落在易伤窗口内",
+      "verdict": "intent",
+      "expectedKey": "burst-only-in-vuln",
+      "combat": { "dungeon": "Mists of Tirna Scithe", "level": 15, "durationSec": 700, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 305, "spell": "Combustion", "note": "获得增益", "actor": "Mymage" },
+          { "t": 310, "spell": "Rune of Power", "note": "获得增益", "actor": "Mymage" }
+        ],
+        "vulnerablePhases": [{ "start": 300, "end": 330, "note": "Vulnerable" }],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "intent-07",
+      "title": "机制前连续位移走位/风筝",
+      "verdict": "intent",
+      "expectedKey": "kite-before-phase",
+      "combat": { "dungeon": "Grim Batol", "level": 12, "durationSec": 500, "playerName": "Huntress" },
+      "aggregate": {
+        "cooldowns": [],
+        "vulnerablePhases": [{ "start": 300, "end": 330, "note": "Enrage" }],
+        "deaths": [],
+        "interrupts": [],
+        "movement": [
+          { "t": 290, "spell": "Sprint", "actor": "Huntress" },
+          { "t": 294, "spell": "Disengage", "actor": "Huntress" },
+          { "t": 297, "spell": "Aspect of the Cheetah", "actor": "Huntress" }
+        ]
+      }
+    },
+    {
+      "id": "intent-08",
+      "title": "易伤开启后 5 秒内卡点开爆发",
+      "verdict": "intent",
+      "expectedKey": "burst-at-phase-start",
+      "combat": { "dungeon": "Mists of Tirna Scithe", "level": 15, "durationSec": 700, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 303, "spell": "Combustion", "note": "获得增益", "actor": "Mymage" }
+        ],
+        "vulnerablePhases": [{ "start": 300, "end": 330, "note": "Vulnerable" }],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "intent-09",
+      "title": "易伤前 45 秒完全留资源",
+      "verdict": "intent",
+      "expectedKey": "resource-pooling",
+      "combat": { "dungeon": "Grim Batol", "level": 12, "durationSec": 500, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 100, "spell": "Mirror Image", "note": "减伤", "actor": "Mymage" },
+          { "t": 405, "spell": "Combustion", "note": "获得增益", "actor": "Mymage" }
+        ],
+        "vulnerablePhases": [{ "start": 400, "end": 420, "note": "Vulnerable" }],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "intent-10",
+      "title": "药水 30 秒增益窗口与易伤窗口重叠",
+      "verdict": "intent",
+      "expectedKey": "potion-window-covers-vuln",
+      "combat": { "dungeon": "Ara-Kara, City of Echoes", "level": 8, "durationSec": 700, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 340, "spell": "Tempered Potion", "note": "使用药水", "actor": "Mymage" }
+        ],
+        "vulnerablePhases": [{ "start": 350, "end": 400, "note": "Vulnerable" }],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "mistake-01",
+      "title": "爆发开启后 15 秒内无任何动作（爆发期空转）",
+      "verdict": "mistake",
+      "expectedKey": "wasted-burst",
+      "combat": { "dungeon": "Mists of Tirna Scithe", "level": 15, "durationSec": 700, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 100, "spell": "Combustion", "note": "获得增益", "actor": "Mymage" }
+        ],
+        "vulnerablePhases": [],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "mistake-02",
+      "title": "喝药水后无爆发也无易伤（药水浪费）",
+      "verdict": "mistake",
+      "expectedKey": "potion-wasted",
+      "combat": { "dungeon": "Grim Batol", "level": 12, "durationSec": 700, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 100, "spell": "Tempered Potion", "note": "使用药水", "actor": "Mymage" }
+        ],
+        "vulnerablePhases": [],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "mistake-03",
+      "title": "易伤/机制阶段内死亡",
+      "verdict": "mistake",
+      "expectedKey": "death-in-vuln",
+      "combat": { "dungeon": "The Stonevault", "level": 10, "durationSec": 400, "playerName": "Tankwar" },
+      "aggregate": {
+        "cooldowns": [],
+        "vulnerablePhases": [{ "start": 300, "end": 330, "note": "Enrage" }],
+        "deaths": [{ "t": 310, "actor": "Healpri" }],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "mistake-04",
+      "title": "两个爆发 10 秒内重叠开启（增益窗口浪费）",
+      "verdict": "mistake",
+      "expectedKey": "burst-overlap",
+      "combat": { "dungeon": "Mists of Tirna Scithe", "level": 15, "durationSec": 700, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 100, "spell": "Combustion", "note": "获得增益", "actor": "Mymage" },
+          { "t": 106, "spell": "Rune of Power", "note": "获得增益", "actor": "Mymage" }
+        ],
+        "vulnerablePhases": [],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "mistake-05",
+      "title": "整场战斗零打断（漏断风险）",
+      "verdict": "mistake",
+      "expectedKey": "zero-interrupts",
+      "combat": { "dungeon": "Ara-Kara, City of Echoes", "level": 8, "durationSec": 600, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [],
+        "vulnerablePhases": [],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "mistake-06",
+      "title": "战斗结束前 40 秒内喝药水（增益用不完）",
+      "verdict": "mistake",
+      "expectedKey": "potion-at-fight-end",
+      "combat": { "dungeon": "Grim Batol", "level": 12, "durationSec": 700, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 680, "spell": "Tempered Potion", "note": "使用药水", "actor": "Mymage" }
+        ],
+        "vulnerablePhases": [{ "start": 700, "end": 730, "note": "Vulnerable" }],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    }
+  ]
+}
