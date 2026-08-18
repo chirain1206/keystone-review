@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/auth/provider";
 import { getRepo } from "@/lib/db";
 import { validateProcessedLog } from "@/lib/parser/schema";
 import { estimateProcessedLogTokens, TOKEN_BUDGET_PER_COMBAT } from "@/lib/ai/tokens";
+import { enforceCreateLimits } from "@/lib/quota/enforce";
 
 export const maxDuration = 30;
 
@@ -13,6 +14,7 @@ const bodySchema = z.object({
   rawLines: z.number().int().min(0).default(0),
   tokenEstimate: z.number().int().min(0).default(0), // 客户端估算（服务端重算为准）
   compareUrl: z.string().trim().url().optional(),
+  turnstileToken: z.string().optional(), // T9 人机验证
 });
 
 /**
@@ -35,7 +37,11 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "请求数据格式不正确" }, { status: 400 });
   }
-  const { log, rawSize, rawLines, compareUrl } = parsed.data;
+  const { log, rawSize, rawLines, compareUrl, turnstileToken } = parsed.data;
+
+  // T9：人机验证 + 频控 + 每日额度
+  const limited = await enforceCreateLimits(req, user.id, turnstileToken);
+  if (limited) return limited;
 
   const valid = validateProcessedLog(log);
   if (!valid.ok) {

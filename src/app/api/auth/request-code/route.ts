@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createAuthProvider } from "@/lib/auth/provider";
 import { checkRateLimit } from "@/lib/auth/guard";
+import { verifyTurnstile } from "@/lib/turnstile/adapter";
 
 export const maxDuration = 30;
 
@@ -21,7 +22,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "请输入有效的邮箱地址" }, { status: 400 });
   }
   const { email, turnstileToken } = parsed.data;
-  void turnstileToken;
+
+  // T9：登录接口人机验证（配置密钥后强制；mock 模式放行）
+  const tv = await verifyTurnstile(turnstileToken, ip);
+  if (!tv.ok) {
+    return NextResponse.json({ ok: false, error: tv.error }, { status: 403 });
+  }
 
   const byEmail = checkRateLimit(`code:email:${email}`, 3, 10 * 60 * 1000);
   if (!byEmail.ok) {

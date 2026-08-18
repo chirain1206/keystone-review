@@ -5,6 +5,7 @@ import { getRepo } from "@/lib/db";
 import { getWclReportMeta } from "@/lib/wcl/adapter";
 import type { ProcessedLog } from "@/lib/parser/schema";
 import { estimateProcessedLogTokens } from "@/lib/ai/tokens";
+import { enforceCreateLimits } from "@/lib/quota/enforce";
 
 export const maxDuration = 30;
 
@@ -12,6 +13,7 @@ const bodySchema = z.object({
   url: z.string().trim().url("链接格式不正确"),
   compareUrl: z.string().trim().url("对比链接格式不正确").optional(),
   fightId: z.number().int().optional(),
+  turnstileToken: z.string().optional(), // T9 人机验证
 });
 
 /**
@@ -34,7 +36,11 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "请粘贴有效的 Warcraft Logs 报告链接" }, { status: 400 });
   }
-  const { url, compareUrl, fightId } = parsed.data;
+  const { url, compareUrl, fightId, turnstileToken } = parsed.data;
+
+  // T9：人机验证 + 频控 + 每日额度
+  const limited = await enforceCreateLimits(req, user.id, turnstileToken);
+  if (limited) return limited;
 
   // 主链接元数据
   const metaResult = await getWclReportMeta(url);
