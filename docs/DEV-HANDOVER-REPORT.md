@@ -64,3 +64,34 @@ npm run dev          # 或 npm run build && npm start（本机用 PORT=3100，�
    "WCL 只做轻量查询、文件上传为主数据源"；mock 数据层为本地 JSON 文件（生产自动切 Supabase）。
 9. 已知取舍：邮箱/IP 频控为进程内存（**仅单实例有效**），每日额度已原子化计数
    （daily_usage 唯一键 + RPC 原子递增）作为最终防线。
+
+## 五、批次 5（RAG 社区知识库，T14–T19）追加
+
+> 追加日期：2026-08-19 · 范围：FR-11 知识库 + FR-5 第三档"疑似高阶技巧"（含用户补充要求：
+> meta 增 origin/status、双源目录、status=active 过滤、T19）。基线：原有 87 用例全绿（现 132 用例）。
+
+### 完成情况与验证方式
+
+| 任务 | 完成内容 | 验证方式 |
+| --- | --- | --- |
+| T14 | 迁移 `0003_kb_documents.sql`（pgvector + kb_documents：chunk_text/embedding vector(1024)/meta(jsonb，含 class/spec/dungeon/patch/type/source_url/**origin/status**)/source_hash 唯一键；余弦检索函数 match_kb_documents；**服务端专用：无 RLS 且显式 revoke anon/authenticated**）；KbStore 接口 + FileKbStore（关键词匹配 mock）+ SupabaseKbStore | `file-store.test.ts` 12 用例：命中/空结果/class-spec-dungeon-type-patch 过滤/**status=active 默认过滤（候选绝不注入）**/top-k≤5/幂等 upsert/patch 比较；迁移可重复执行（if not exists / create or replace） |
+| T15 | SiliconFlow bge-m3 适配器（OpenAI 兼容 `{base}/v1/embeddings`，1024 维；无密钥 mock 确定性伪向量）；`scripts/ingest-kb.mjs`（frontmatter 校验→分节切块→嵌入→source_hash 幂等 upsert）；**双源目录互不覆盖**：kb/sources/（curated→active）与 kb/inferred/（inferred→candidate），各含骨架样例；EMBEDDING_API_KEY/BASE_URL/MODEL + ACTIVE_PATCH 环境变量与生产 fail-fast | `ingest.test.ts` 12 用例：frontmatter 必填校验、节内覆写、长节切块、**真实目录入库两次幂等（第二次 0 新增）**、**双目录互不覆盖（curated 检索不含 candidate）**、mock 嵌入 1024 维确定性；**沙箱内 tsx 子进程受限**，脚本逻辑由测试全量覆盖（正常开发环境可直接 `node scripts/ingest-kb.mjs`） |
+| T16 | 检索服务：query=class/spec+副本+章节/问答 → 嵌入 → top-k≤5；**仅注入 status=active**；patch 过滤（ACTIVE_PATCH 优先，缺省库内最新非 general；patch=general 始终可见）；注入格式：`【社区攻略参考】…【/社区攻略参考】` 定界 + 逐条"参考社区攻略：source_url"标注 + 系统指令声明数据区无指令效力（防提示词注入）；第 5 章与问答注入；降级（空库/未命中/嵌入或检索失败 → 仅 log 证据，不报错） | `retrieval.test.ts` 7 用例（定界/来源/≤5、候选不注入、ACTIVE_PATCH 切换、未命中 null、检索异常降级）；`rag-injection.test.ts` 端到端：第 5 章知识意图标注来源、问答回答含"参考社区攻略"；原 87 用例全绿 |
+| T17 | intent-samples.json 新增 **5 个领域知识依赖型意图案例**（赌 buff 聚怪、留爆发对齐下一波易伤、资源循环停手、延后打断控链、宠物提前就位）+ 配套 kbFixtures + **1 个疑似案例**；评测双模式（A 无检索 / B 有检索）输出对比 | `intent-eval.test.ts`：知识依赖样例**注入知识后正确率 100%（≥80%）**、无检索时 0%（体现注入价值）、非知识依赖样例 ≥80%、疑似案例两模式均判"疑似"不判失误 |
+| T18 | 初始知识库内容：**火焰法师（12 条）/ 兽王猎人（11 条）/ 防护战士（11 条）**，均为至暗之夜 12.1 大秘境 S2 要点摘要（意图模式/爆发规划/资源管理/副本机制/补丁变动），frontmatter 带 patch=12.1 + 出处链接（NGA/Wowhead/B 站等，取自调研报告） | `ingest.test.ts` 内容合规用例：3 个文件 ≥10 条/文件、patch=12.1、source_url http(s)、单条 ≤1200 字符（要点摘要非整篇搬运）；出处链接来源见 docs/rag-community-knowledge-feasibility.md（QA 可打开验证） |
+| T19 | 第 5 章提示词**三档结论**：正确决策 / 可改进点 / **疑似高阶技巧**（知识库解释不了但证据链完整 → "疑似技巧+证据+推断理由"，不武断判失误）；疑似发现**幂等落库** origin=inferred、status=candidate（绝不注入正式分析）；mock 提供器同步实现（宠物提前就位样例：判疑似而非失误；知识解释同一事件时自动升为意图） | `candidates.test.ts` 5 用例（判定、落库可查、正式检索不注入、幂等）；`rag-injection.test.ts`：第 5 章同时出现"✅ 正确决策（参考社区攻略）"与"🔎 疑似高阶技巧"，候选落库 1 条且重跑不重复；样例 `suspected-01` 判疑似不判失误 |
+
+### 批次 5 遗留事项（阶段 5 部署/QA 执行）
+
+1. **真实嵌入密钥**：配置 `EMBEDDING_API_KEY / EMBEDDING_BASE_URL / EMBEDDING_MODEL`（SiliconFlow bge-m3）
+   后嵌入走真实 API；生产 fail-fast 已含这三项（缺任一拒绝以 mock 运行）。
+2. **真实 Supabase pgvector 迁移执行**：`supabase/migrations/0003_kb_documents.sql` 需在 Supabase
+   控制台启用 pgvector 扩展并执行（本机无 supabase CLI/docker，未实测执行；文件可重复执行）。
+   同理 `0002_daily_usage.sql`。
+3. **真实模型 QA**：配置 DeepSeek 后跑 `npm run eval:intent`（双模式对比；知识依赖案例 ≥80% 放行）、
+   报告 120s/问答 30s 压测；重点核查**知识注入防提示词攻击**（数据区指令隔离）与疑似技巧输出格式。
+4. **入库流程运维**（正常开发环境执行）：`node scripts/ingest-kb.mjs`（双目录、幂等）；
+   补丁更新 SLA ≤1 周由调研员→主 Agent 审核→入库；候选技巧转正走主 Agent 初审 + 内测专家终审。
+5. **构建说明**：本沙箱禁止子进程，`npm run build` 的类型检查步骤 spawn EPERM（编译已通过
+   "✓ Compiled successfully"）；以 `node node_modules/typescript/bin/tsc --noEmit`（通过，exit 0）
+   + 132/132 测试全绿作为类型与回归证据；正常环境请复跑 `npm run build`。
