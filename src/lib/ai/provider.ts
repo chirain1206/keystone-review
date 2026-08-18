@@ -159,6 +159,12 @@ class MockAiProvider implements AiProvider {
   private generate(messages: ChatMessage[], opts: ChatOptions): string {
     const system = messages.find((m) => m.role === "system")?.content ?? "";
     const user = messages.find((m) => m.role === "user")?.content ?? "";
+
+    // 问答分支（T7）
+    if (system.includes("问答助手")) {
+      return this.generateQaAnswer(user, opts);
+    }
+
     const chapterMatch = /【章节(\d)】/.exec(system) ?? /章节(\d)/.exec(system);
     const chapterNo = chapterMatch ? Number(chapterMatch[1]) : 1;
 
@@ -309,6 +315,99 @@ class MockAiProvider implements AiProvider {
     // 输出封顶（模拟真实输出上限约束）
     const capChars = (opts.maxTokens ?? 1800) * 3;
     return text.length > capChars ? text.slice(0, capChars) : text;
+  }
+
+  /** mock 问答：基于结构化数据 + 关键词给出带时间戳证据的确定性回答（T7）。 */
+  private generateQaAnswer(user: string, opts: ChatOptions): string {
+    const qMatch = /玩家问题：([\s\S]*)$/.exec(user);
+    const question = (qMatch ? qMatch[1] : user).trim();
+
+    let log: {
+      combat?: { dungeon?: string; level?: number; durationSec?: number; success?: boolean; playerName?: string };
+      aggregate?: {
+        interrupts?: { t: number; spell?: string; actor?: string }[];
+        deaths?: { t: number; actor?: string }[];
+        cooldowns?: { t: number; spell?: string; note?: string; actor?: string }[];
+        vulnerablePhases?: { start: number; end: number; note?: string }[];
+        movement?: { t: number; spell?: string }[];
+      };
+    } = {};
+    const jsonMatch = /```json\n([\s\S]*?)\n```/.exec(user);
+    if (jsonMatch) {
+      try {
+        log = JSON.parse(jsonMatch[1]) as typeof log;
+      } catch {
+        // 忽略
+      }
+    }
+    const agg = log.aggregate ?? {};
+    const combat = log.combat ?? {};
+    const verdicts = runIntentEngine({
+      combat: {
+        durationSec: combat.durationSec ?? 0,
+        dungeon: combat.dungeon ?? "",
+        level: combat.level ?? 0,
+        playerName: combat.playerName ?? "",
+      },
+      aggregate: {
+        cooldowns: agg.cooldowns ?? [],
+        vulnerablePhases: agg.vulnerablePhases ?? [],
+        deaths: agg.deaths ?? [],
+        interrupts: agg.interrupts ?? [],
+        movement: agg.movement ?? [],
+      },
+    });
+
+    const q = question.toLowerCase();
+    let answer: string;
+
+    if (/上分|3000|冲层|分数|io分|整体提升/.test(q) && !/本场|这场/.test(q)) {
+      answer =
+        `基于本场数据（${combat.dungeon ?? "本场"} ${combat.level ?? ""} 层）：` +
+        `先把第 4 章的可改进点逐条解决，再按第 6 章建议做 1–3 次针对性练习，通常比盲目冲层更有效。` +
+        `（此为通用建议，不是基于本场数据；跨场综合分析将在后续版本提供。）`;
+    } else if (/爆发|cd|伤害低|打低|输出/.test(q)) {
+      const bursts = agg.cooldowns?.filter((c) => (c.note ?? "").includes("获得增益")) ?? [];
+      const intents = verdicts.filter((v) => v.verdict === "intent");
+      if (bursts.length === 0) {
+        answer = `本场记录到的爆发/CD 事件较少（${fmt(0)} 起无爆发增益记录），难以从本场数据定位爆发问题；建议检查是否漏开爆发。`;
+      } else {
+        const refs = bursts.slice(0, 4).map((b) => `${fmt(b.t)} ${b.spell}`).join("、");
+        const intentNote = intents.length
+          ? ` 其中 ${intents.slice(0, 2).map((v) => v.explain).join("；")}`
+          : "";
+        answer =
+          `从本场数据看，你的爆发时间点为 ${refs}。${intentNote || "爆发期间应保持技能循环不间断（证据见本场时间线）。"}`;
+      }
+    } else if (/死|减员|生存/.test(q)) {
+      const deaths = agg.deaths ?? [];
+      if (deaths.length === 0) {
+        answer = "本场未记录到玩家死亡，生存表现没有明显问题。";
+      } else {
+        answer =
+          `本场死亡记录：${deaths.map((d) => `${fmt(d.t)} ${d.actor ?? ""}`).join("；")}。` +
+          `建议对照这些时间点检查减伤覆盖与治疗资源（本场减伤使用：${(agg.cooldowns ?? []).filter((c) => (c.note ?? "").includes("减伤")).map((c) => `${fmt(c.t)} ${c.spell}`).join("、") || "无记录"}）。`;
+      }
+    } else if (/打断|漏断/.test(q)) {
+      const interrupts = agg.interrupts ?? [];
+      answer = interrupts.length
+        ? `本场打断共 ${interrupts.length} 次：${interrupts.map((i) => `${fmt(i.t)} ${i.spell ?? ""}`).join("、")}。可对照队伍分工检查是否存在漏断。`
+        : "本场未记录到打断事件，存在漏断风险，建议约定打断分工（此为通用建议，不是基于本场数据）。";
+    } else if (/药水|potion/.test(q)) {
+      const potions = agg.cooldowns?.filter((c) => (c.spell ?? "").toLowerCase().includes("potion")) ?? [];
+      answer = potions.length
+        ? `本场药水使用：${potions.map((p) => `${fmt(p.t)} ${p.spell}（${p.note ?? ""}）`).join("；")}。`
+        : "本场未记录到药水使用。";
+    } else {
+      const c = agg.cooldowns ?? [];
+      answer =
+        `本场关键数据（${combat.dungeon ?? ""} ${combat.level ?? ""} 层）：打断 ${agg.interrupts?.length ?? 0} 次，` +
+        `死亡 ${agg.deaths?.length ?? 0} 次，爆发/CD ${c.length} 次，易伤窗口 ${agg.vulnerablePhases?.length ?? 0} 个。` +
+        `针对你问的「${question.slice(0, 30)}」，请参考以上数据结合第 4/5 章复盘结论；如需更具体的点，请补充时间点或技能名。`;
+    }
+
+    const capChars = (opts.maxTokens ?? 1200) * 3;
+    return answer.length > capChars ? answer.slice(0, capChars) : answer;
   }
 }
 
