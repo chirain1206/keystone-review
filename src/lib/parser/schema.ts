@@ -60,12 +60,23 @@ export const vulnerablePhaseSchema = z.object({
 });
 export type VulnerablePhase = z.infer<typeof vulnerablePhaseSchema>;
 
+export const perMinuteBucketSchema = z.object({
+  minute: z.number().int(), // 战斗内第 N 分钟（0 起）
+  player: z.string(),
+  casts: z.array(z.object({ spell: z.string(), count: z.number().int() })).optional(), // 非关键技能聚合
+  damage: z.number().optional(), // 该分钟内伤害合计
+  heal: z.number().optional(), // 该分钟内治疗合计
+});
+export type PerMinuteBucket = z.infer<typeof perMinuteBucketSchema>;
+
 export const aggregateSchema = z.object({
   interrupts: z.array(timelineEventSchema), // 打断事件（含成功/失败）
   deaths: z.array(timelineEventSchema), // 死亡事件
   cooldowns: z.array(timelineEventSchema), // 爆发/CD/药水使用（按时间排序）
   vulnerablePhases: z.array(vulnerablePhaseSchema), // BOSS 易伤/阶段窗口
   movement: z.array(timelineEventSchema), // 大位移事件
+  perMinute: z.array(perMinuteBucketSchema), // 分钟级聚合（降噪后的输出/治疗）
+  truncated: z.boolean().optional(), // 触发硬性 token 预算截断时为 true
 });
 export type Aggregate = z.infer<typeof aggregateSchema>;
 

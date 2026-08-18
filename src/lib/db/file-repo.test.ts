@@ -106,6 +106,7 @@ describe("FileRepo 数据隔离与级联（T2）", () => {
           cooldowns: [],
           vulnerablePhases: [],
           movement: [],
+          perMinute: [],
         },
       },
       rawSize: 1000,
