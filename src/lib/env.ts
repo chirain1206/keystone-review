@@ -45,8 +45,10 @@ export const envConfig = {
     return Boolean(this.embeddingApiKey);
   },
 
-  // FR-11 知识库：活跃补丁（缺省由库内最新非 general 补丁兜底）
-  activePatch: env("ACTIVE_PATCH"),
+  // FR-11 知识库：活跃补丁（缺省由库内最新非 general 补丁兜底；动态读取便于测试/热切换）
+  get activePatch(): string {
+    return env("ACTIVE_PATCH");
+  },
 
   devLogCodes: env("DEV_LOG_CODES") === "true",
 } as const;

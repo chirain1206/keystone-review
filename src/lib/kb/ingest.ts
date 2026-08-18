@@ -124,11 +124,13 @@ export function computeSourceHash(fileName: string, frontmatter: Record<string, 
 
 export interface ParsedFile {
   fileName: string;
+  /** 文件级 frontmatter（不含 origin/status，用于哈希与目录级覆写） */
+  frontmatter: Record<string, string>;
   meta: KbMeta;
-  chunks: { text: string; sourceHash: string; title: string; meta: KbMeta }[];
+  chunks: { text: string; title: string; meta: KbMeta }[];
 }
 
-/** 校验并解析单个 kb 源文件。 */
+/** 校验并解析单个 kb 源文件（origin/status 由入库目录在 runIngest 覆写）。 */
 export function parseKbFile(fileName: string, content: string): ParsedFile {
   const { data, body } = parseFrontmatter(content);
   const missing = REQUIRED_FRONTMATTER.filter((k) => !data[k]?.trim());
@@ -142,6 +144,10 @@ export function parseKbFile(fileName: string, content: string): ParsedFile {
     patch: data.patch.trim(),
     type: data.type.trim(),
     source_url: data.source_url.trim(),
+    // origin/status 由入库目录决定（kb/sources → curated/active；
+    // kb/inferred → inferred/candidate），不读 frontmatter。
+    origin: "curated",
+    status: "active",
   };
   if (!/^https?:\/\//.test(meta.source_url)) {
     throw new Error(`kb/sources/${fileName}: source_url 必须是 http(s) 链接`);
@@ -153,14 +159,23 @@ export function parseKbFile(fileName: string, content: string): ParsedFile {
       text,
       title: s.title,
       meta: { ...meta, ...s.overrides },
-      sourceHash: computeSourceHash(fileName, { ...data, ...s.overrides }, text),
     })),
   );
-  return { fileName, meta, chunks };
+  return { fileName, frontmatter: data, meta, chunks };
 }
 
-/** 主入库流程：目录下所有 .md → 解析 → 嵌入 → upsert。 */
-export async function runIngest(sourcesDir: string): Promise<IngestStats> {
+export interface IngestOptions {
+  /** 入库目录决定的来源标记（缺省 curated）。 */
+  origin: KbMeta["origin"];
+  /** 入库目录决定的状态标记（缺省 active）。 */
+  status: KbMeta["status"];
+}
+
+/** 主入库流程：目录下所有 .md → 解析 → 嵌入 → upsert（origin/status 由目录决定）。 */
+export async function runIngest(
+  sourcesDir: string,
+  options: IngestOptions = { origin: "curated", status: "active" },
+): Promise<IngestStats> {
   const stats: IngestStats = { files: 0, chunks: 0, upserted: 0, skipped: 0, errors: [] };
   let entries: string[];
   try {
@@ -177,11 +192,22 @@ export async function runIngest(sourcesDir: string): Promise<IngestStats> {
       const content = await fs.readFile(path.join(sourcesDir, entry), "utf8");
       const parsed = parseKbFile(entry, content);
       for (const c of parsed.chunks) {
+        const finalMeta: KbMeta = {
+          ...c.meta,
+          origin: options.origin,
+          status: options.status,
+        };
+        // source_hash 含 origin/status：同一内容在 curated 与 inferred
+        // 两个目录互不覆盖（不同哈希、独立条目）。
+        const hashMeta: Record<string, string> = {
+          ...parsed.frontmatter,
+          ...Object.fromEntries(Object.entries(finalMeta).filter(([, v]) => typeof v === "string")),
+        };
         allDocs.push({
           id: randomUUID(),
           chunkText: c.text,
-          meta: c.meta,
-          sourceHash: c.sourceHash,
+          meta: finalMeta,
+          sourceHash: computeSourceHash(entry, hashMeta, c.text),
           embedding: new Array(1024).fill(0), // 下方批量嵌入回填
         });
       }

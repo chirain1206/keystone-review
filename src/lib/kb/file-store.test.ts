@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { FileKbStore, cmpPatch, tokenize } from "@/lib/kb/file-store";
-import type { KbDocument } from "@/lib/kb/types";
+import type { KbDocument, KbMeta } from "@/lib/kb/types";
 
 /**
  * T14 验收（FR-11 存储与检索）：
@@ -26,12 +26,25 @@ beforeEach(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-function doc(overrides: Partial<KbDocument> & { chunkText: string; meta: KbDocument["meta"] }): KbDocument {
+type MetaInput = Omit<KbMeta, "origin" | "status"> & {
+  origin?: KbMeta["origin"];
+  status?: KbMeta["status"];
+};
+
+type DocInput = Omit<Partial<KbDocument>, "meta"> & { chunkText: string; meta: MetaInput };
+
+function doc(overrides: DocInput): KbDocument {
+  const { meta, ...rest } = overrides;
   return {
     id: `id-${Math.random().toString(36).slice(2, 8)}`,
     sourceHash: `hash-${Math.random().toString(36).slice(2, 10)}`,
     embedding: new Array(1024).fill(0),
-    ...overrides,
+    ...rest,
+    meta: {
+      ...meta,
+      origin: meta.origin ?? "curated",
+      status: meta.status ?? "active",
+    },
   };
 }
 
@@ -151,6 +164,35 @@ describe("FileKbStore 检索（T14）", () => {
   it("getActivePatch：返回库中最新非 general 补丁", async () => {
     const store = await seed();
     expect(await store.getActivePatch()).toBe("12.1");
+  });
+
+  it("status 过滤：默认只注入 active，候选/弃用条目绝不注入；显式过滤可查询候选", async () => {
+    const store = await seed();
+    await store.upsert([
+      doc({
+        chunkText: "候选技巧：转阶段前宠物提前就位规避落地伤害。",
+        meta: { class: "Mage", spec: "Fire", dungeon: "*", patch: "12.1", type: "intent_pattern", source_url: "https://wow-analyzer.local/inferred/x", origin: "inferred", status: "candidate" },
+      }),
+      doc({
+        chunkText: "弃用打法：开场无脑喝药水（已过时）。",
+        meta: { class: "Mage", spec: "Fire", dungeon: "*", patch: "12.0", type: "intent_pattern", source_url: "https://wow-analyzer.local/deprecated/x", origin: "curated", status: "deprecated" },
+      }),
+    ]);
+
+    const active = await store.search(
+      { text: "宠物 技巧 药水", vector: [] },
+      { class: "Mage", spec: "Fire", patch: "12.1" },
+      10,
+    );
+    expect(active.every((h) => h.meta.status === "active")).toBe(true);
+
+    const candidates = await store.search(
+      { text: "宠物 技巧", vector: [] },
+      { class: "Mage", spec: "Fire", status: "candidate" },
+      10,
+    );
+    expect(candidates.some((h) => h.meta.origin === "inferred" && h.meta.status === "candidate")).toBe(true);
+    expect(candidates.every((h) => h.meta.status === "candidate")).toBe(true);
   });
 
   it("upsert 幂等：相同 source_hash 不重复插入；内容变更则更新", async () => {

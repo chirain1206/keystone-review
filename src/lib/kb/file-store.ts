@@ -86,9 +86,12 @@ export class FileKbStore implements KbStore {
     const docs = await loadAll();
     const qTokens = tokenize(query.text);
     const scored: { doc: KbDocument; score: number }[] = [];
+    // 状态过滤：默认仅 active（候选条目绝不注入正式分析）
+    const statusFilter = filters.status ?? "active";
 
     for (const doc of docs) {
       const m = doc.meta;
+      if (statusFilter && m.status !== statusFilter) continue;
       if (filters.class && m.class !== filters.class) continue;
       if (filters.spec && m.spec !== filters.spec) continue;
       if (!dungeonVisible(m.dungeon, filters.dungeon)) continue;

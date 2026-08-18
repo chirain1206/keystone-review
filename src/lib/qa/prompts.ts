@@ -1,5 +1,6 @@
 import type { ProcessedLog } from "@/lib/parser/schema";
 import type { Message } from "@/lib/db/types";
+import { KB_INJECTION_RULES } from "@/lib/kb/retrieval";
 
 /**
  * 问答提示词与上下文组装（T7，FR-6）。
@@ -7,6 +8,7 @@ import type { Message } from "@/lib/db/types";
  *  - 回答必须引用时间戳/技能证据
  *  - 无法从 log 判断的内容必须说明"通用建议，非本场数据"
  *  - 违规请求礼貌拒绝（与 guard.ts 双保险）
+ *  - FR-11：注入【社区攻略参考】数据区（数据/指令隔离）
  */
 
 export const QA_SYSTEM_PROMPT = `你是《魔兽世界》大秘境复盘教练的问答助手，只针对"当前这一场战斗日志"回答问题。
@@ -16,7 +18,9 @@ export const QA_SYSTEM_PROMPT = `你是《魔兽世界》大秘境复盘教练�
 3. 无法从本场 log 判断的内容，必须明确说明"（此为通用建议，不是基于本场数据）"，不得冒充本场证据。
 4. 遇到代练、账号交易、陪玩、现金交易、脚本外挂等请求：礼貌拒绝，并说明产品定位是帮助玩家"自己进步"。
 5. 结合上文连续追问时保持一致；回答控制在 400 字以内，聚焦问题本身。
-6. 用户问跨场/上分等超出本场范围的问题：基于本场数据给出有限建议，并提示"跨场综合分析将在后续版本提供"。`;
+6. 用户问跨场/上分等超出本场范围的问题：基于本场数据给出有限建议，并提示"跨场综合分析将在后续版本提供"。
+7. 涉及职业打法/战术合理性判断时，可参考【社区攻略参考】数据区；引用时必须标注"参考社区攻略"。
+${KB_INJECTION_RULES}`;
 
 const fmt = (sec: number) => {
   const m = Math.floor(sec / 60);

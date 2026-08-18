@@ -30,7 +30,7 @@ export interface IntentInput {
     vulnerablePhases: { start: number; end: number; note?: string }[];
     deaths: { t: number; actor?: string }[];
     interrupts: { t: number; spell?: string }[];
-    movement: { t: number; spell?: string }[];
+    movement: { t: number; spell?: string; actor?: string }[];
   };
 }
 
@@ -38,6 +38,262 @@ export function fmt(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// ---------- 领域知识依赖型意图（FR-11，T16/T17） ----------
+
+/**
+ * 知识依赖型意图的"结构化判定块"（mock 基线用；真实模型读自然语言知识）。
+ * 格式（出现在知识片段文本内）：
+ *   【意图:<key>】
+ *   {"kind":"...", ...条件参数}
+ *   【解释】中文解释，可用 {t} 占位替换为关键时间点【/意图】
+ * 生产知识内容（kb/sources/*.md）不含该结构 —— 它是评测 fixture 与 mock 基线的
+ * 判定载体；真实模型按第 5 章提示词对自然语言知识做同样的判定。
+ */
+export interface IntentBlock {
+  key: string;
+  kind: string;
+  conditions: Record<string, unknown>;
+  explain: string;
+}
+
+export function extractIntentBlocks(text: string): IntentBlock[] {
+  const out: IntentBlock[] = [];
+  const re = /【意图:([a-z0-9-]+)】\s*(\{[\s\S]*?\})\s*(?:【解释】([\s\S]*?))?【\/意图】/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    try {
+      out.push({
+        key: m[1],
+        kind: (JSON.parse(m[2]) as { kind?: string }).kind ?? m[1],
+        conditions: JSON.parse(m[2]) as Record<string, unknown>,
+        explain: (m[3] ?? "").trim(),
+      });
+    } catch {
+      // 非法块跳过（视为普通知识文本）
+    }
+  }
+  return out;
+}
+
+export interface KnowledgeVerdict {
+  key: string;
+  verdict: "intent";
+  explain: string;
+  atSec?: number;
+}
+
+function num(c: Record<string, unknown>, k: string, dflt: number): number {
+  const v = c[k];
+  return typeof v === "number" ? v : dflt;
+}
+
+function evaluateIntentBlock(block: IntentBlock, input: IntentInput): KnowledgeVerdict | null {
+  const { aggregate: agg } = input;
+  const isProc = (c: { note?: string }) => (c.note ?? "").includes("触发");
+  const bursts = agg.cooldowns.filter(isBurst);
+  const buffs = agg.cooldowns.filter(
+    (c) => !(c.spell ?? "").toLowerCase().includes("potion") && (c.note ?? "").includes("获得增益"),
+  );
+  const procs = agg.cooldowns.filter(
+    (c) => !(c.spell ?? "").toLowerCase().includes("potion") && isProc(c),
+  );
+  const potions = agg.cooldowns.filter(isPotionCast);
+  const vulns = agg.vulnerablePhases;
+  const interrupts = agg.interrupts;
+  const c = block.conditions;
+
+  let atSec: number | null = null;
+  let ok = false;
+
+  switch (block.kind) {
+    case "gather-before-burst": {
+      // 怪聚齐前打资源/赌 buff 触发，聚齐后带最佳增益爆发：
+      // [0,noBurstBefore) 无爆发；存在 t≥burstAfter 的爆发；
+      // 爆发前 within 秒内触发类增益获得 ≥ min 次（触发与爆发区分开，避免互斥）
+      const noBurstBefore = num(c, "noBurstBefore", 40);
+      const burstAfter = num(c, "burstAfter", 40);
+      const within = num(c, "buffWithin", 30);
+      const minBuffs = num(c, "minBuffs", 2);
+      const early = bursts.some((b) => b.t < noBurstBefore);
+      const late = bursts.filter((b) => b.t >= burstAfter);
+      for (const b of late) {
+        const buffsNear = [...procs, ...buffs].filter(
+          (x) => x !== b && x.t <= b.t && x.t >= b.t - within,
+        ).length;
+        if (!early && buffsNear >= minBuffs) {
+          atSec = b.t;
+          ok = true;
+          break;
+        }
+      }
+      break;
+    }
+    case "hold-burst-next-vuln": {
+      // 留爆发对齐下一波易伤：爆发开在 [0,burstBefore]，且下一波易伤在 vulnAfter 之后
+      const burstBefore = num(c, "burstBefore", 60);
+      const vulnAfter = num(c, "vulnAfter", 90);
+      const inVuln = (t: number) => vulns.some((v) => t >= v.start && t <= v.end);
+      for (const b of bursts) {
+        if (b.t <= burstBefore && !inVuln(b.t) && vulns.some((v) => v.start >= vulnAfter)) {
+          atSec = b.t;
+          ok = true;
+          break;
+        }
+      }
+      break;
+    }
+    case "quiet-resource-window": {
+      // 资源循环停手/攒资源窗口：[ws,we) 内无任何技能使用（触发类增益不算施放），
+      // 但有 ≥minBuffs 次触发类增益获得
+      const ws = num(c, "windowStart", 60);
+      const we = num(c, "windowEnd", 120);
+      const minBuffs = num(c, "minBuffs", 1);
+      const anyCd = agg.cooldowns.some((x) => x.t >= ws && x.t < we && !isProc(x));
+      const buffsIn = procs.filter((x) => x.t >= ws && x.t < we).length;
+      if (!anyCd && buffsIn >= minBuffs) {
+        atSec = ws;
+        ok = true;
+      }
+      break;
+    }
+    case "late-interrupt-by-design": {
+      // 故意延后打断（等聚怪/控链）：[0,noInterruptBefore) 零打断，其后 ≥min 次
+      const noInterruptBefore = num(c, "noInterruptBefore", 120);
+      const minAfter = num(c, "minInterruptsAfter", 2);
+      const early = interrupts.some((i) => i.t < noInterruptBefore);
+      const lateCount = interrupts.filter((i) => i.t >= noInterruptBefore).length;
+      if (!early && lateCount >= minAfter) {
+        atSec = interrupts.find((i) => i.t >= noInterruptBefore)?.t ?? noInterruptBefore;
+        ok = true;
+      }
+      break;
+    }
+    case "burst-late-in-vuln": {
+      // 易伤后半段才开爆发（机制要求先走位/先处理其他目标）：
+      // 爆发落在易伤窗口内且位于窗口后 lastFraction 段
+      const lastFraction = num(c, "lastFraction", 0.34);
+      for (const b of bursts) {
+        for (const v of vulns) {
+          if (b.t >= v.start && b.t <= v.end) {
+            const remain = (v.end - b.t) / Math.max(1, v.end - v.start);
+            if (remain <= lastFraction) {
+              atSec = b.t;
+              ok = true;
+              break;
+            }
+          }
+        }
+        if (ok) break;
+      }
+      break;
+    }
+    case "pet-preposition": {
+      // 转阶段前宠物/召唤物提前就位规避落地伤害（领域知识解释版）：
+      // 阶段开始前 [beforeLo,beforeHi] 秒内，非主角玩家单位位移 ≥minMoves 次
+      const beforeLo = num(c, "beforeLo", 2);
+      const beforeHi = num(c, "beforeHi", 25);
+      const minMoves = num(c, "minMoves", 2);
+      const subject = input.combat.playerName ?? "";
+      for (const v of vulns) {
+        const pre = agg.movement
+          .filter(
+            (m) =>
+              m.actor && m.actor !== subject && v.start - m.t >= beforeLo && v.start - m.t <= beforeHi,
+          )
+          .sort((a, b) => a.t - b.t);
+        if (pre.length >= minMoves) {
+          atSec = pre[0].t;
+          ok = true;
+          break;
+        }
+      }
+      break;
+    }
+    default:
+      return null;
+  }
+
+  void potions;
+  if (!ok) return null;
+  const explain = (block.explain || "该操作符合该专精的领域打法知识，判断为有意图的正确决策。").replaceAll(
+    "{t}",
+    atSec !== null ? fmt(atSec) : "—",
+  );
+  return { key: block.key, verdict: "intent", explain, atSec: atSec ?? undefined };
+}
+
+/** 知识辅助判定：扫描知识文本中的结构化判定块并求值。 */
+export function runKnowledgeIntentDetection(
+  input: IntentInput,
+  knowledgeTexts: string[],
+): KnowledgeVerdict[] {
+  const out: KnowledgeVerdict[] = [];
+  const seen = new Set<string>();
+  for (const text of knowledgeTexts) {
+    for (const block of extractIntentBlocks(text)) {
+      if (seen.has(block.key)) continue;
+      seen.add(block.key);
+      const v = evaluateIntentBlock(block, input);
+      if (v) out.push(v);
+    }
+  }
+  return out;
+}
+
+// ---------- 疑似高阶技巧（FR-5 第三档，T19） ----------
+
+/**
+ * "疑似高阶技巧"判定：知识库解释不了、但证据链完整的异常操作。
+ * 不武断判失误 —— 输出"疑似技巧 + 证据 + 推断理由"，并沉淀为候选条目
+ * （origin=inferred、status=candidate，绝不注入正式分析）。
+ */
+export interface SuspectedVerdict {
+  key: string;
+  verdict: "suspected";
+  explain: string; // 含证据与推断理由
+  evidence: string;
+  atSec?: number;
+}
+
+export function runSuspectedTechniqueDetection(
+  input: IntentInput,
+  explainedByKnowledge: { atSec?: number }[],
+): SuspectedVerdict[] {
+  const out: SuspectedVerdict[] = [];
+  const { aggregate: agg, combat } = input;
+  const subject = combat.playerName ?? "";
+
+  // 规则 1：转阶段前宠物/非玩家单位提前就位
+  // 证据链：阶段开始前 25–2 秒内，非主角玩家单位连续位移 ≥2 次。
+  // 该窗口避开 kite-before-phase（玩家自身位移）的 10 秒规则窗，不与其冲突。
+  for (const v of agg.vulnerablePhases) {
+    const pre = agg.movement
+      .filter(
+        (m) =>
+          m.actor && m.actor !== subject && v.start - m.t >= 2 && v.start - m.t <= 25,
+      )
+      .sort((a, b) => a.t - b.t);
+    if (pre.length < 2) continue;
+
+    const knowledgeExplains = explainedByKnowledge.some(
+      (k) => k.atSec !== undefined && Math.abs(k.atSec - pre[0].t) <= 20,
+    );
+    if (knowledgeExplains) continue; // 知识已解释 → 归为意图，不判疑似
+
+    const spells = pre.map((m) => m.spell ?? "位移").join("、");
+    const evidence = `非玩家单位「${pre[0].actor}」在 ${fmt(pre[0].t)}–${fmt(pre[pre.length - 1].t)} 连续位移 ${pre.length} 次（${spells}），位于阶段切换（${fmt(v.start)} 起）前 25 秒内；该单位非复盘对象本人。`;
+    out.push({
+      key: "pet-preposition-before-phase",
+      verdict: "suspected",
+      atSec: pre[0].t,
+      evidence,
+      explain: `${evidence} 推断：可能是提前指挥宠物/召唤物走位就位，以规避转阶段落地/机制伤害的高阶技巧。知识库暂无对应解释，不武断判为失误，已沉淀为候选条目待人工审查。`,
+    });
+  }
+
+  return out;
 }
 
 type CD = { t: number; spell?: string; note?: string; actor?: string };

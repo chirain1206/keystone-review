@@ -9,6 +9,7 @@ import {
   ROUNDS_EXCEEDED_MESSAGE,
 } from "@/lib/qa/prompts";
 import { detectViolation, REFUSAL_MESSAGE } from "@/lib/qa/guard";
+import { retrieveKnowledge } from "@/lib/kb/retrieval";
 
 /**
  * 问答服务（T7，FR-6）。
@@ -112,6 +113,22 @@ export async function askQuestion(
     `${history.length ? buildHistoryBlock(history) + "\n" : ""}` +
     `玩家问题：${question}`;
 
+  // FR-11：问答检索注入社区知识（top-k≤5、定界包裹、来源标注；失败/未命中降级）
+  let userContentWithKb = userContent;
+  try {
+    const kb = await retrieveKnowledge({
+      playerClass: report.playerClass,
+      playerSpec: report.spec,
+      dungeon: report.dungeon,
+      question,
+    });
+    if (kb) {
+      userContentWithKb = userContent.replace(`玩家问题：${question}`, `${kb.formatted}\n\n玩家问题：${question}`);
+    }
+  } catch {
+    // 降级：仅 log 证据回答（FR-11）
+  }
+
   await repo.addMessage({
     conversationId: conv.id,
     reportId,
@@ -125,7 +142,7 @@ export async function askQuestion(
     const result = await ai.chat(
       [
         { role: "system", content: QA_SYSTEM_PROMPT },
-        { role: "user", content: userContent },
+        { role: "user", content: userContentWithKb },
       ],
       { maxTokens: 1200, temperature: 0.4 },
       { onDelta: (d) => {

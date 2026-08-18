@@ -1,6 +1,10 @@
 import { envConfig, requireProductionEnv } from "@/lib/env";
 import { estimateTokens } from "@/lib/ai/tokens";
-import { runIntentEngine } from "@/lib/ai/intent-engine";
+import {
+  runIntentEngine,
+  runKnowledgeIntentDetection,
+  runSuspectedTechniqueDetection,
+} from "@/lib/ai/intent-engine";
 
 /**
  * AI 适配层（T5）。
@@ -143,6 +147,21 @@ function fmt(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+/**
+ * 提取用户消息中的【社区攻略参考】数据区（FR-11）。
+ * 按 [片段N] 行切分成独立知识文本，供知识辅助判定扫描。
+ */
+export function extractKbRegion(user: string): string[] {
+  const start = user.indexOf("【社区攻略参考】");
+  if (start < 0) return [];
+  const end = user.indexOf("【/社区攻略参考】", start);
+  const region = user.slice(start, end >= 0 ? end : user.length);
+  return region
+    .split(/\n(?=\[片段\d+\])/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 class MockAiProvider implements AiProvider {
   readonly mode = "mock" as const;
 
@@ -217,8 +236,49 @@ class MockAiProvider implements AiProvider {
         movement: agg.movement ?? [],
       },
     });
-    const intentVerdicts = verdicts.filter((v) => v.verdict === "intent");
+    // FR-11：领域知识依赖型意图（数据区知识辅助判定，仅用于 mock 基线）
+    const knowledgeVerdicts = runKnowledgeIntentDetection(
+      {
+        combat: {
+          durationSec: combat.durationSec ?? 0,
+          dungeon,
+          level,
+          playerName: player,
+        },
+        aggregate: {
+          cooldowns,
+          vulnerablePhases: vuln,
+          deaths,
+          interrupts,
+          movement: agg.movement ?? [],
+        },
+      },
+      extractKbRegion(user),
+    );
+    const intentVerdicts = [
+      ...verdicts.filter((v) => v.verdict === "intent"),
+      ...knowledgeVerdicts,
+    ];
     const mistakeVerdicts = verdicts.filter((v) => v.verdict === "mistake");
+    // T19 第三档：知识库解释不了但证据链完整的异常操作 → 疑似高阶技巧（不判失误）
+    const suspectedVerdicts = runSuspectedTechniqueDetection(
+      {
+        combat: {
+          durationSec: combat.durationSec ?? 0,
+          dungeon,
+          level,
+          playerName: player,
+        },
+        aggregate: {
+          cooldowns,
+          vulnerablePhases: vuln,
+          deaths,
+          interrupts,
+          movement: agg.movement ?? [],
+        },
+      },
+      knowledgeVerdicts,
+    );
 
     const lines: string[] = [];
     switch (chapterNo) {
@@ -290,10 +350,20 @@ class MockAiProvider implements AiProvider {
         lines.push("战术意图识别：");
         if (intentVerdicts.length > 0) {
           for (const v of intentVerdicts) {
-            lines.push(`- ✅ 正确决策（${v.atSec !== undefined ? fmt(v.atSec) : "—"}）：${v.explain}`);
+            const isKnowledge = knowledgeVerdicts.some((k) => k.key === v.key);
+            lines.push(
+              `- ✅ 正确决策（${v.atSec !== undefined ? fmt(v.atSec) : "—"}）：${v.explain}${isKnowledge ? "（参考社区攻略）" : ""}`,
+            );
           }
         } else {
           lines.push("- 本场未发现「看似异常实为正确决策」的样本操作。");
+        }
+        if (suspectedVerdicts.length > 0) {
+          for (const s of suspectedVerdicts) {
+            lines.push(
+              `- 🔎 疑似高阶技巧（${s.atSec !== undefined ? fmt(s.atSec) : "—"}）：${s.explain}`,
+            );
+          }
         }
         if (mistakeVerdicts.length > 0) {
           lines.push(
@@ -359,6 +429,44 @@ class MockAiProvider implements AiProvider {
         movement: agg.movement ?? [],
       },
     });
+    // FR-11 / T19：问答同样消费知识数据区与疑似技巧判定
+    const kbTexts = extractKbRegion(user);
+    const knowledgeVerdicts = runKnowledgeIntentDetection(
+      {
+        combat: {
+          durationSec: combat.durationSec ?? 0,
+          dungeon: combat.dungeon ?? "",
+          level: combat.level ?? 0,
+          playerName: combat.playerName ?? "",
+        },
+        aggregate: {
+          cooldowns: agg.cooldowns ?? [],
+          vulnerablePhases: agg.vulnerablePhases ?? [],
+          deaths: agg.deaths ?? [],
+          interrupts: agg.interrupts ?? [],
+          movement: agg.movement ?? [],
+        },
+      },
+      kbTexts,
+    );
+    const suspectedVerdicts = runSuspectedTechniqueDetection(
+      {
+        combat: {
+          durationSec: combat.durationSec ?? 0,
+          dungeon: combat.dungeon ?? "",
+          level: combat.level ?? 0,
+          playerName: combat.playerName ?? "",
+        },
+        aggregate: {
+          cooldowns: agg.cooldowns ?? [],
+          vulnerablePhases: agg.vulnerablePhases ?? [],
+          deaths: agg.deaths ?? [],
+          interrupts: agg.interrupts ?? [],
+          movement: agg.movement ?? [],
+        },
+      },
+      knowledgeVerdicts,
+    );
 
     const q = question.toLowerCase();
     let answer: string;
@@ -370,7 +478,10 @@ class MockAiProvider implements AiProvider {
         `（此为通用建议，不是基于本场数据；跨场综合分析将在后续版本提供。）`;
     } else if (/爆发|cd|伤害低|打低|输出/.test(q)) {
       const bursts = agg.cooldowns?.filter((c) => (c.note ?? "").includes("获得增益")) ?? [];
-      const intents = verdicts.filter((v) => v.verdict === "intent");
+      const intents = [
+        ...verdicts.filter((v) => v.verdict === "intent"),
+        ...knowledgeVerdicts.map((v) => ({ ...v, explain: `${v.explain}（参考社区攻略）` })),
+      ];
       if (bursts.length === 0) {
         answer = `本场记录到的爆发/CD 事件较少（${fmt(0)} 起无爆发增益记录），难以从本场数据定位爆发问题；建议检查是否漏开爆发。`;
       } else {
@@ -380,6 +491,16 @@ class MockAiProvider implements AiProvider {
           : "";
         answer =
           `从本场数据看，你的爆发时间点为 ${refs}。${intentNote || "爆发期间应保持技能循环不间断（证据见本场时间线）。"}`;
+      }
+    } else if (/宠物|位移|走位|技巧|手法|打法|疑似/.test(q)) {
+      const knowledgeNotes = knowledgeVerdicts.map((v) => v.explain).join("；");
+      const suspectedNotes = suspectedVerdicts.map((s) => s.explain).join("；");
+      if (suspectedNotes) {
+        answer = `本场发现疑似高阶技巧：${suspectedNotes}（不武断判为失误，已沉淀为候选条目待人工审查。）`;
+      } else if (knowledgeNotes) {
+        answer = `结合社区攻略（参考社区攻略）：${knowledgeNotes}`;
+      } else {
+        answer = `本场未发现可判定的位移/宠物相关技巧（此为通用建议，不是基于本场数据）。`;
       }
     } else if (/死|减员|生存/.test(q)) {
       const deaths = agg.deaths ?? [];

@@ -11,7 +11,7 @@ import {
   splitSections,
 } from "@/lib/kb/ingest";
 import { mockEmbedding, EMBEDDING_DIM } from "@/lib/kb/embedding";
-import { resetKbStoreForTest } from "@/lib/kb";
+import { getKbStore, resetKbStoreForTest } from "@/lib/kb";
 
 /**
  * T15 验收（FR-11 嵌入与入库管线）：
@@ -124,7 +124,7 @@ describe("kb 源文件解析", () => {
   });
 });
 
-describe("入库管线（幂等）", () => {
+describe("入库管线（幂等 + 双源目录）", () => {
   it("runIngest 入库 kb/sources 真实目录：片段 ≥10、重复执行零新增", async () => {
     const sourcesDir = path.join(process.cwd(), "kb", "sources");
     const first = await runIngest(sourcesDir);
@@ -138,6 +138,36 @@ describe("入库管线（幂等）", () => {
     expect(second.skipped).toBe(second.chunks);
   });
 
+  it("双源目录互不覆盖：curated→active 与 inferred→candidate 独立入库", async () => {
+    const sourcesDir = path.join(process.cwd(), "kb", "sources");
+    const inferredDir = path.join(process.cwd(), "kb", "inferred");
+    const a = await runIngest(sourcesDir, { origin: "curated", status: "active" });
+    const b = await runIngest(inferredDir, { origin: "inferred", status: "candidate" });
+    expect(a.errors).toEqual([]);
+    expect(b.errors).toEqual([]);
+    expect(a.upserted).toBeGreaterThanOrEqual(10);
+    expect(b.upserted).toBeGreaterThanOrEqual(2);
+
+    const store = getKbStore();
+    expect(await store.count()).toBe(a.upserted + b.upserted); // 互不覆盖
+
+    // 正式检索（active）绝不返回候选条目（curated 的同主题内容可以命中）
+    const activeHits = await store.search(
+      { text: "疑似技巧 宠物 就位", vector: [] },
+      { class: "Hunter", spec: "Beast Mastery", patch: null },
+      5,
+    );
+    expect(activeHits.length).toBeGreaterThan(0);
+    expect(activeHits.every((h) => h.meta.status === "active" && h.meta.origin === "curated")).toBe(true);
+    const candidateHits = await store.search(
+      { text: "疑似技巧 宠物 就位", vector: [] },
+      { class: "Hunter", spec: "Beast Mastery", status: "candidate", patch: null },
+      5,
+    );
+    expect(candidateHits.length).toBeGreaterThanOrEqual(2);
+    expect(candidateHits.every((h) => h.meta.origin === "inferred" && h.meta.status === "candidate")).toBe(true);
+  });
+
   it("runIngest 校验失败文件会记入 errors 而不中断其他文件", async () => {
     const tmpDir = path.join(dir, "sources");
     await fs.mkdir(tmpDir, { recursive: true });
@@ -148,5 +178,23 @@ describe("入库管线（幂等）", () => {
     expect(stats.errors.length).toBe(1);
     expect(stats.errors[0]).toContain("broken.md");
     expect(stats.upserted).toBe(2); // good.md 的两个 chunk 正常入库
+  });
+});
+
+describe("初始知识库内容合规（T18）", () => {
+  it("kb/sources 全部文件：frontmatter 合规、每文件 ≥10 条、patch=12.1、出处 http(s)", async () => {
+    const sourcesDir = path.join(process.cwd(), "kb", "sources");
+    const files = (await fs.readdir(sourcesDir)).filter((f) => f.endsWith(".md"));
+    expect(files.length).toBeGreaterThanOrEqual(3); // 3 个专精
+    for (const f of files) {
+      const parsed = parseKbFile(f, await fs.readFile(path.join(sourcesDir, f), "utf8"));
+      expect(parsed.meta.patch, `${f} patch`).toBe("12.1");
+      expect(parsed.meta.source_url, `${f} source_url`).toMatch(/^https?:\/\//);
+      expect(parsed.chunks.length, `${f} 条目数 ≥10`).toBeGreaterThanOrEqual(10);
+      for (const c of parsed.chunks) {
+        // 要点摘要而非整篇搬运：单条 ≤1200 字符
+        expect(c.text.length).toBeLessThanOrEqual(1200);
+      }
+    }
   });
 });

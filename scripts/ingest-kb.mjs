@@ -27,21 +27,39 @@ const { envConfig } = await import("../src/lib/env.ts");
 const { getKbStore } = await import("../src/lib/kb/index.ts");
 
 const argDir = process.argv[2];
-const sourcesDir = argDir
-  ? path.resolve(argDir)
-  : path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "kb", "sources");
+const root = argDir ? path.resolve(argDir) : path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "kb");
 
-console.log(`[ingest-kb] 知识源目录：${sourcesDir}`);
+// 两个源目录（互不覆盖）：curated→active / inferred→candidate
+const targets = argDir
+  ? [{ dir: root, origin: "curated", status: "active", label: argDir }]
+  : [
+      { dir: path.join(root, "sources"), origin: "curated", status: "active", label: "kb/sources" },
+      { dir: path.join(root, "inferred"), origin: "inferred", status: "candidate", label: "kb/inferred" },
+    ];
+
 console.log(`[ingest-kb] 嵌入后端：${envConfig.embeddingEnabled ? `${envConfig.embeddingModel}（真实）` : "mock 确定性伪向量（未配置 EMBEDDING_API_KEY）"}`);
 
-const stats = await runIngest(sourcesDir);
+let totalFiles = 0;
+let totalChunks = 0;
+let totalUpserted = 0;
+let totalSkipped = 0;
+const allErrors = [];
+for (const t of targets) {
+  console.log(`[ingest-kb] 目录 ${t.label} → origin=${t.origin}, status=${t.status}`);
+  const stats = await runIngest(t.dir, { origin: t.origin, status: t.status });
+  totalFiles += stats.files;
+  totalChunks += stats.chunks;
+  totalUpserted += stats.upserted;
+  totalSkipped += stats.skipped;
+  allErrors.push(...stats.errors);
+}
 console.log(
-  `[ingest-kb] 完成：文件 ${stats.files}，片段 ${stats.chunks}，入库/更新 ${stats.upserted}，跳过（幂等）${stats.skipped}，错误 ${stats.errors.length}`,
+  `[ingest-kb] 完成：文件 ${totalFiles}，片段 ${totalChunks}，入库/更新 ${totalUpserted}，跳过（幂等）${totalSkipped}，错误 ${allErrors.length}`,
 );
-for (const e of stats.errors) console.error(`[ingest-kb] 错误：${e}`);
+for (const e of allErrors) console.error(`[ingest-kb] 错误：${e}`);
 
 const total = await getKbStore().count();
 const activePatch = envConfig.activePatch || (await getKbStore().getActivePatch());
 console.log(`[ingest-kb] 库内片段总数：${total}；活跃补丁：${activePatch ?? "（空库）"}`);
 
-process.exit(stats.errors.length > 0 ? 1 : 0);
+process.exit(allErrors.length > 0 ? 1 : 0);

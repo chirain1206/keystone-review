@@ -5,9 +5,16 @@ import {
   CHAPTER_OUTPUT_TOKEN_CAP,
 } from "@/lib/ai/prompts";
 import { estimateTokens } from "@/lib/ai/tokens";
+import {
+  runKnowledgeIntentDetection,
+  runSuspectedTechniqueDetection,
+  type IntentInput,
+} from "@/lib/ai/intent-engine";
 import { getRepo } from "@/lib/db";
 import { CHAPTER_COUNT, CHAPTER_TITLES, type Report, type ReportChapter } from "@/lib/db/types";
 import type { ProcessedLog } from "@/lib/parser/schema";
+import { retrieveKnowledge } from "@/lib/kb/retrieval";
+import { persistSuspectedCandidates } from "@/lib/kb/candidates";
 
 /**
  * 复盘生成管线（T5，FR-4 / ADR-001）。
@@ -20,6 +27,25 @@ import type { ProcessedLog } from "@/lib/parser/schema";
 
 const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 800;
+
+/** 从结构化日志构造意图引擎输入（第 5 章知识辅助判定 + 疑似技巧检测共用）。 */
+function intentInputFromLog(log: ProcessedLog): IntentInput {
+  return {
+    combat: {
+      durationSec: log.combat.durationSec,
+      dungeon: log.combat.dungeon,
+      level: log.combat.level,
+      playerName: log.combat.playerName,
+    },
+    aggregate: {
+      cooldowns: log.aggregate.cooldowns,
+      vulnerablePhases: log.aggregate.vulnerablePhases,
+      deaths: log.aggregate.deaths,
+      interrupts: log.aggregate.interrupts,
+      movement: log.aggregate.movement,
+    },
+  };
+}
 
 export interface GenerateCallbacks {
   onStatus?: (chapterNo: number, status: ReportChapter["status"]) => void;
@@ -79,6 +105,25 @@ async function generateChapter(
     user += `\n\n对比基准（顶尖玩家本场数据）：\n${JSON.stringify(report.compareMeta)}`;
   }
 
+  // FR-11：第 5 章检索注入社区知识（top-k≤5、定界包裹、来源标注；失败/未命中降级）
+  let kbTexts: string[] = [];
+  if (chapterNo === 5) {
+    try {
+      const kb = await retrieveKnowledge({
+        playerClass: report.playerClass,
+        playerSpec: report.spec,
+        dungeon: report.dungeon,
+        chapterNo: 5,
+      });
+      if (kb) {
+        user += `\n\n${kb.formatted}`;
+        kbTexts = kb.hits.map((h) => h.chunkText);
+      }
+    } catch {
+      // 降级：仅 log 证据分析（FR-11）
+    }
+  }
+
   const ai = getAiProvider();
   let lastError: Error | null = null;
 
@@ -109,6 +154,32 @@ async function generateChapter(
         costUsd: result.costUsd,
       });
       cb?.onStatus?.(chapterNo, "done");
+
+      // T19：第 5 章完成后，检测"疑似高阶技巧"并沉淀候选（幂等）
+      if (chapterNo === 5) {
+        try {
+          const knowledgeVerdicts = runKnowledgeIntentDetection(
+            intentInputFromLog(log),
+            kbTexts,
+          );
+          const suspected = runSuspectedTechniqueDetection(
+            intentInputFromLog(log),
+            knowledgeVerdicts,
+          );
+          await persistSuspectedCandidates(
+            {
+              class: report.playerClass,
+              spec: report.spec,
+              dungeon: report.dungeon,
+            },
+            suspected,
+          );
+        } catch (err) {
+          console.error(
+            `[kb] 疑似技巧沉淀降级：${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
       return chapter;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));

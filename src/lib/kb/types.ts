@@ -16,6 +16,10 @@ export interface KbMeta {
   type: string;
   /** 出处链接（必填，报告引用时标注"参考社区攻略"） */
   source_url: string;
+  /** 来源：curated=攻略整理 / inferred=log 推断 / community=社区反馈（由入库目录决定） */
+  origin: "curated" | "inferred" | "community";
+  /** 状态：active=生效（可注入）/ candidate=候选（绝不注入正式分析）/ deprecated=弃用 */
+  status: "active" | "candidate" | "deprecated";
 }
 
 export interface KbDocument {
@@ -42,6 +46,11 @@ export interface KbSearchFilters {
   /** 活跃补丁；null = 不按补丁过滤（测试用） */
   patch?: string | null;
   type?: string;
+  /**
+   * 状态过滤：默认 "active"（候选/弃用条目绝不注入正式分析）；
+   * 显式传入其他值仅供管理/测试查询。
+   */
+  status?: "active" | "candidate" | "deprecated";
 }
 
 export interface KbSearchQuery {

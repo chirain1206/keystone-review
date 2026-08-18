@@ -28,6 +28,7 @@ export class SupabaseKbStore implements KbStore {
       match_spec: filters.spec ?? null,
       match_dungeon: filters.dungeon ?? null,
       match_patch: filters.patch ?? null,
+      match_status: filters.status ?? "active",
       match_count: Math.min(Math.max(topK, 1), KB_TOP_K_MAX),
     });
     if (error) throw new Error(`知识库检索失败：${error.message}`);
