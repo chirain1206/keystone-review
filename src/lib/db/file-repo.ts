@@ -18,7 +18,9 @@ import type {
  * 行为语义与 Supabase 版本保持一致：
  *  - 按 user_id 隔离（实现层过滤）
  *  - 删除 report 级联删除 processed_log/chapters/conversations/messages/shares
- *  - 写入原子化（临时文件 + rename），进程内互斥队列防并发写坏文件
+ *  - 写操作 = 锁内"读-改-写"（原子 rename 落盘），并行写互不丢失
+ *  - 读操作直读磁盘：Next.js 按路由分包会产生多份模块实例，
+ *    直读保证跨路由写后可见
  *
  * 仅用于本地开发与自动化测试；部署阶段配置 Supabase 环境变量后自动切换到
  * supabase-repo.ts（见 db/index.ts）。
@@ -38,9 +40,7 @@ type CollectionName =
   | "messages"
   | "shares";
 
-const cache = new Map<CollectionName, Record<string, unknown>>();
-
-/** 进程内写互斥：串行化所有落盘操作，避免并发 rename 竞争。 */
+/** 进程内写互斥：串行化所有落盘操作。 */
 let tail: Promise<unknown> = Promise.resolve();
 function withLock<T>(fn: () => Promise<T>): Promise<T> {
   const result = tail.then(
@@ -59,22 +59,23 @@ function filePath(name: CollectionName): string {
 }
 
 async function load<T>(name: CollectionName): Promise<Record<string, T>> {
-  if (cache.has(name)) return cache.get(name) as Record<string, T>;
   try {
     const raw = await fs.readFile(filePath(name), "utf8");
-    const parsed = JSON.parse(raw) as Record<string, T>;
-    cache.set(name, parsed);
-    return parsed;
+    return JSON.parse(raw) as Record<string, T>;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    cache.set(name, {});
     return {} as Record<string, T>;
   }
 }
 
-async function persist(name: CollectionName, data: Record<string, unknown>): Promise<void> {
-  cache.set(name, data);
+/** 锁内"读-改-写"：并行调用互不丢失更新。 */
+async function mutate<T>(
+  name: CollectionName,
+  fn: (data: Record<string, T>) => void | Promise<void>,
+): Promise<void> {
   await withLock(async () => {
+    const data = await load<T>(name);
+    await fn(data);
     await fs.mkdir(dataDir(), { recursive: true });
     const tmp = filePath(name) + `.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(data), "utf8");
@@ -86,24 +87,17 @@ function now(): number {
   return Date.now();
 }
 
-async function updateReportFields(reportId: string, patch: Partial<Report>): Promise<void> {
-  const reports = await load<Report>("reports");
-  const r = reports[reportId];
-  if (!r) return;
-  reports[reportId] = { ...r, ...patch, updatedAt: now() };
-  await persist("reports", reports);
-}
-
 export class FileRepo implements Repo {
   // ---- profiles ----
   async upsertProfile(p: { id: string; email: string; timezone: string }): Promise<Profile> {
-    const profiles = await load<Profile>("profiles");
-    const existing = profiles[p.id];
-    const profile: Profile = existing
-      ? { ...existing, email: p.email, timezone: p.timezone }
-      : { id: p.id, email: p.email, timezone: p.timezone, createdAt: now() };
-    profiles[p.id] = profile;
-    await persist("profiles", profiles);
+    let profile!: Profile;
+    await mutate<Profile>("profiles", (profiles) => {
+      const existing = profiles[p.id];
+      profile = existing
+        ? { ...existing, email: p.email, timezone: p.timezone }
+        : { id: p.id, email: p.email, timezone: p.timezone, createdAt: now() };
+      profiles[p.id] = profile;
+    });
     return profile;
   }
 
@@ -114,25 +108,26 @@ export class FileRepo implements Repo {
 
   // ---- reports ----
   async createReport(input: CreateReportInput): Promise<Report> {
-    const reports = await load<Report>("reports");
-    const id = randomUUID();
-    const report: Report = {
-      id,
-      userId: input.userId,
-      sourceType: input.sourceType,
-      dungeon: input.dungeon,
-      level: input.level,
-      spec: input.spec,
-      playerName: input.playerName,
-      playerClass: input.playerClass,
-      result: input.result,
-      status: "parsed",
-      compareMeta: input.compareMeta ?? null,
-      createdAt: now(),
-      updatedAt: now(),
-    };
-    reports[id] = report;
-    await persist("reports", reports);
+    let report!: Report;
+    await mutate<Report>("reports", (reports) => {
+      const id = randomUUID();
+      report = {
+        id,
+        userId: input.userId,
+        sourceType: input.sourceType,
+        dungeon: input.dungeon,
+        level: input.level,
+        spec: input.spec,
+        playerName: input.playerName,
+        playerClass: input.playerClass,
+        result: input.result,
+        status: "parsed",
+        compareMeta: input.compareMeta ?? null,
+        createdAt: now(),
+        updatedAt: now(),
+      };
+      reports[id] = report;
+    });
     return report;
   }
 
@@ -155,58 +150,56 @@ export class FileRepo implements Repo {
   }
 
   async updateReportStatus(reportId: string, status: Report["status"]): Promise<void> {
-    await updateReportFields(reportId, { status });
+    await mutate<Report>("reports", (reports) => {
+      const r = reports[reportId];
+      if (!r) return;
+      reports[reportId] = { ...r, status, updatedAt: now() };
+    });
   }
 
   async deleteReport(userId: string, reportId: string): Promise<boolean> {
     const r = await this.getReport(userId, reportId);
     if (!r) return false;
-    // 各集合文件独立原子落盘，顺序执行即可（mock 模式单进程语义）
-    const reports = await load<Report>("reports");
-    delete reports[reportId];
-    await persist("reports", reports);
 
-    const logs = await load<ProcessedLogRecord>("processed_logs");
-    delete logs[reportId];
-    await persist("processed_logs", logs);
-
-    const chapters = await load<ReportChapter>("chapters");
-    for (const [k, c] of Object.entries(chapters)) {
-      if (c.reportId === reportId) delete chapters[k];
-    }
-    await persist("chapters", chapters);
-
-    const convs = await load<Conversation>("conversations");
+    await mutate<Report>("reports", (reports) => {
+      delete reports[reportId];
+    });
+    await mutate<ProcessedLogRecord>("processed_logs", (logs) => {
+      delete logs[reportId];
+    });
+    await mutate<ReportChapter>("chapters", (chapters) => {
+      for (const [k, c] of Object.entries(chapters)) {
+        if (c.reportId === reportId) delete chapters[k];
+      }
+    });
     const convIds = new Set(
-      Object.values(convs)
+      Object.values(await load<Conversation>("conversations"))
         .filter((c) => c.reportId === reportId)
         .map((c) => c.id),
     );
-    for (const [k, c] of Object.entries(convs)) {
-      if (c.reportId === reportId) delete convs[k];
-    }
-    await persist("conversations", convs);
-
-    const messages = await load<Message>("messages");
-    for (const [k, m] of Object.entries(messages)) {
-      if (m.reportId === reportId || convIds.has(m.conversationId)) delete messages[k];
-    }
-    await persist("messages", messages);
-
-    const shares = await load<Share>("shares");
-    for (const [k, s] of Object.entries(shares)) {
-      if (s.reportId === reportId) delete shares[k];
-    }
-    await persist("shares", shares);
-
+    await mutate<Conversation>("conversations", (convs) => {
+      for (const [k, c] of Object.entries(convs)) {
+        if (c.reportId === reportId) delete convs[k];
+      }
+    });
+    await mutate<Message>("messages", (messages) => {
+      for (const [k, m] of Object.entries(messages)) {
+        if (m.reportId === reportId || convIds.has(m.conversationId)) delete messages[k];
+      }
+    });
+    await mutate<Share>("shares", (shares) => {
+      for (const [k, s] of Object.entries(shares)) {
+        if (s.reportId === reportId) delete shares[k];
+      }
+    });
     return true;
   }
 
   // ---- processed logs ----
   async saveProcessedLog(record: Omit<ProcessedLogRecord, "createdAt">): Promise<void> {
-    const logs = await load<ProcessedLogRecord>("processed_logs");
-    logs[record.reportId] = { ...record, createdAt: now() };
-    await persist("processed_logs", logs);
+    await mutate<ProcessedLogRecord>("processed_logs", (logs) => {
+      logs[record.reportId] = { ...record, createdAt: now() };
+    });
   }
 
   async getProcessedLog(userId: string, reportId: string): Promise<ProcessedLogRecord | null> {
@@ -231,26 +224,27 @@ export class FileRepo implements Repo {
     tokensOut: number;
     costUsd: number;
   }): Promise<ReportChapter> {
-    const chapters = await load<ReportChapter>("chapters");
-    const existing = Object.values(chapters).find(
-      (ch) => ch.reportId === c.reportId && ch.chapterNo === c.chapterNo,
-    );
-    const id = existing?.id ?? randomUUID();
-    const chapter: ReportChapter = {
-      id,
-      reportId: c.reportId,
-      chapterNo: c.chapterNo,
-      title: c.title,
-      content: c.content,
-      status: c.status,
-      tokensIn: c.tokensIn,
-      tokensOut: c.tokensOut,
-      costUsd: c.costUsd,
-      createdAt: existing?.createdAt ?? now(),
-      updatedAt: now(),
-    };
-    chapters[id] = chapter;
-    await persist("chapters", chapters);
+    let chapter!: ReportChapter;
+    await mutate<ReportChapter>("chapters", (chapters) => {
+      const existing = Object.values(chapters).find(
+        (ch) => ch.reportId === c.reportId && ch.chapterNo === c.chapterNo,
+      );
+      const id = existing?.id ?? randomUUID();
+      chapter = {
+        id,
+        reportId: c.reportId,
+        chapterNo: c.chapterNo,
+        title: c.title,
+        content: c.content,
+        status: c.status,
+        tokensIn: c.tokensIn,
+        tokensOut: c.tokensOut,
+        costUsd: c.costUsd,
+        createdAt: existing?.createdAt ?? now(),
+        updatedAt: now(),
+      };
+      chapters[id] = chapter;
+    });
     return chapter;
   }
 
@@ -278,11 +272,12 @@ export class FileRepo implements Repo {
 
   // ---- conversations / messages ----
   async createConversation(reportId: string): Promise<Conversation> {
-    const convs = await load<Conversation>("conversations");
-    const id = randomUUID();
-    const conv: Conversation = { id, reportId, createdAt: now() };
-    convs[id] = conv;
-    await persist("conversations", convs);
+    let conv!: Conversation;
+    await mutate<Conversation>("conversations", (convs) => {
+      const id = randomUUID();
+      conv = { id, reportId, createdAt: now() };
+      convs[id] = conv;
+    });
     return conv;
   }
 
@@ -301,19 +296,20 @@ export class FileRepo implements Repo {
     content: string;
     meta?: Message["meta"];
   }): Promise<Message> {
-    const messages = await load<Message>("messages");
-    const id = randomUUID();
-    const msg: Message = {
-      id,
-      conversationId: m.conversationId,
-      reportId: m.reportId,
-      role: m.role,
-      content: m.content,
-      meta: m.meta,
-      createdAt: now(),
-    };
-    messages[id] = msg;
-    await persist("messages", messages);
+    let msg!: Message;
+    await mutate<Message>("messages", (messages) => {
+      const id = randomUUID();
+      msg = {
+        id,
+        conversationId: m.conversationId,
+        reportId: m.reportId,
+        role: m.role,
+        content: m.content,
+        meta: m.meta,
+        createdAt: now(),
+      };
+      messages[id] = msg;
+    });
     return msg;
   }
 
@@ -350,18 +346,19 @@ export class FileRepo implements Repo {
     enabled: boolean;
     expiresAt: number | null;
   }): Promise<Share> {
-    const shares = await load<Share>("shares");
-    const id = randomUUID();
-    const share: Share = {
-      id,
-      reportId: s.reportId,
-      token: s.token,
-      enabled: s.enabled,
-      createdAt: now(),
-      expiresAt: s.expiresAt,
-    };
-    shares[id] = share;
-    await persist("shares", shares);
+    let share!: Share;
+    await mutate<Share>("shares", (shares) => {
+      const id = randomUUID();
+      share = {
+        id,
+        reportId: s.reportId,
+        token: s.token,
+        enabled: s.enabled,
+        createdAt: now(),
+        expiresAt: s.expiresAt,
+      };
+      shares[id] = share;
+    });
     return share;
   }
 
@@ -385,10 +382,10 @@ export class FileRepo implements Repo {
   ): Promise<void> {
     const r = await this.getReport(userId, reportId);
     if (!r) return;
-    const shares = await load<Share>("shares");
-    const s = Object.values(shares).find((x) => x.reportId === reportId && x.token === token);
-    if (!s) return;
-    shares[s.id] = { ...s, enabled };
-    await persist("shares", shares);
+    await mutate<Share>("shares", (shares) => {
+      const s = Object.values(shares).find((x) => x.reportId === reportId && x.token === token);
+      if (!s) return;
+      shares[s.id] = { ...s, enabled };
+    });
   }
 }

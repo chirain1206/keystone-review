@@ -21,6 +21,8 @@ interface Entry {
 
 type Store = Record<string, Entry>;
 
+// 注意：Next.js 会为不同路由单独打包，进程内可能存在多份本模块实例，
+// 因此不做长驻内存缓存 —— 每次读取都直读磁盘，保证写后可见性。
 const cache: { data: Store | null } = { data: null };
 
 let tail: Promise<unknown> = Promise.resolve();
@@ -37,23 +39,21 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function load(): Promise<Store> {
-  if (cache.data) return cache.data;
   const fp = path.join(dataDir(), FILE);
   try {
-    cache.data = JSON.parse(await fs.readFile(fp, "utf8")) as Store;
+    return JSON.parse(await fs.readFile(fp, "utf8")) as Store;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    cache.data = {};
+    return {};
   }
-  return cache.data;
 }
 
-async function persist(): Promise<void> {
+async function persist(store: Store): Promise<void> {
   const fp = path.join(dataDir(), FILE);
   await withLock(async () => {
     await fs.mkdir(dataDir(), { recursive: true });
     const tmp = fp + `.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(cache.data), "utf8");
+    await fs.writeFile(tmp, JSON.stringify(store), "utf8");
     await fs.rename(tmp, fp);
   });
 }
@@ -70,6 +70,7 @@ export async function kvGet<T>(key: string): Promise<T | null> {
   if (!entry) return null;
   if (entry.expiresAt !== null && entry.expiresAt <= Date.now()) {
     delete store[key];
+    await persist(store);
     return null;
   }
   return entry.value as T;
@@ -81,19 +82,19 @@ export async function kvSet(key: string, value: unknown, ttlMs?: number): Promis
     value,
     expiresAt: ttlMs ? Date.now() + ttlMs : null,
   };
-  await persist();
+  await persist(store);
 }
 
 export async function kvDelete(key: string): Promise<void> {
   const store = await load();
   if (key in store) {
     delete store[key];
-    await persist();
+    await persist(store);
   }
 }
 
 export async function kvCleanup(): Promise<void> {
   const store = await load();
   prune(store, Date.now());
-  await persist();
+  await persist(store);
 }
