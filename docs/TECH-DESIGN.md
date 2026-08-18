@@ -73,7 +73,7 @@ Vercel（Next.js 服务端，免费档 60s/函数）
 - **内容与更新（知识保鲜闭环，非一次性注入）**：调研确认当前为《至暗之夜》补丁 12.1、大秘境第 2 赛季；来源优先级 **NGA 各职业精华帖 > Wowhead 中/英文指南 > B站（头部攻略 up）> Icy Veins > 17173/网易大神**。所有站点无公开 API、ToS 禁止爬取 → 全自动抓取不可行，保鲜靠三层机制：
   1. **补丁触发更新（主通道）**：补丁/热修上线 → 调研员按 patch notes + 社区差异起草 → 主 Agent 审核 → 入库，SLA ≤1 周；
   2. **社区反哺**（阶段 7 运营搭通道）：玩家反馈新手法/纠错 → 团队验证 → 入库；
-  3. **log 推断（疑似技巧发现，v1 即启用）**：分析发现"疑似高阶技巧" → 落库为候选（inferred/candidate）→ 人工审核（主 Agent 初审 + 内测专家玩家终审）转正或弃用；批量聚类挖掘（第二版）。
+  3. **log 推断（疑似技巧发现，v1 即启用）**：分析发现"疑似高阶技巧" → 落库为候选（inferred/candidate）→ 人工审核（主 Agent 初审 + 内测专家玩家终审）转正或弃用；**多 log 交叉挖掘（用户新要求，批次 6）**：团队侧离线工具喂入同一高端玩家同副本/日期相近的多份 log，以副本时间轴（转阶段/易伤窗口）为锚归一化相对时间，检测"相似条件下重复出现的操作模式"——**重复即意图证据**（单场巧合、多场刻意），产出候选 + 证据汇总与置信度评分；全自动大规模聚类（第二版）。
   **版本治理**：kb_documents.meta.patch 标记内容版本；检索默认只注入活跃补丁内容（部署变量 ACTIVE_PATCH），跨版本通用知识（如职业资源循环原理）标记 patch=general；旧内容保留不物理删除（可回滚）；ingest 脚本按 source_hash 幂等重建。**只存要点摘要与出处链接，不整篇搬运**（版权合规）。详细调研见 docs/rag-community-knowledge-feasibility.md。
 - **存储与检索**：Supabase pgvector（调研确认免费层支持；片段 = 文本 + meta（class/spec/dungeon/patch/type/source_url/**origin/status**）+ bge-m3 嵌入（1024 维））；**检索仅返回 status=active**（候选绝不注入正式分析）；源文件分目录：kb/sources/（curated→active）与 kb/inferred/（inferred→candidate），互不覆盖；运行时只查自己的库（无 SSRF）；免费层 1 周不活跃暂停 → 部署阶段加保活 cron 或接受冷启动。
 - **嵌入**：SiliconFlow bge-m3（中文最佳、几乎免费；备选 Jina 免费档）；DeepSeek 无嵌入 API（已核实），必须外接。
