@@ -171,11 +171,11 @@ describe("FileKbStore 检索（T14）", () => {
     await store.upsert([
       doc({
         chunkText: "候选技巧：转阶段前宠物提前就位规避落地伤害。",
-        meta: { class: "Mage", spec: "Fire", dungeon: "*", patch: "12.1", type: "intent_pattern", source_url: "https://wow-analyzer.local/inferred/x", origin: "inferred", status: "candidate" },
+        meta: { class: "Mage", spec: "Fire", dungeon: "*", patch: "12.1", type: "intent_pattern", source_url: "internal:inference", origin: "inferred", status: "candidate" },
       }),
       doc({
         chunkText: "弃用打法：开场无脑喝药水（已过时）。",
-        meta: { class: "Mage", spec: "Fire", dungeon: "*", patch: "12.0", type: "intent_pattern", source_url: "https://wow-analyzer.local/deprecated/x", origin: "curated", status: "deprecated" },
+        meta: { class: "Mage", spec: "Fire", dungeon: "*", patch: "12.0", type: "intent_pattern", source_url: "https://www.icy-veins.com/wow/fire-mage-guide", origin: "curated", status: "deprecated" },
       }),
     ]);
 
