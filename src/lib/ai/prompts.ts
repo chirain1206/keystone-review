@@ -127,13 +127,76 @@ export function estimateSliceTokens(slice: string): number {
   return estimateTokens(slice);
 }
 
-/** 构造完整用户消息（含切片 JSON 供 mock 解析 + 可读文本）。 */
+/**
+ * 章节级 JSON 切片（I-6 成本修复）：只发该章需要的聚合字段，而非全量 aggregate。
+ * 总体概览用 summary 口径，各章按需携带爆发/减伤/打断/死亡/易伤/位移等子集。
+ * mock 提供器据此字段确定性生成内容；真实模型把它作为"引用证据"的紧凑视图。
+ */
+export function sliceJsonForChapter(
+  chapterNo: number,
+  log: ProcessedLog,
+): Record<string, unknown> {
+  const { combat, aggregate: agg } = log;
+  switch (chapterNo) {
+    case 1:
+      return {
+        combat,
+        aggregate: {
+          interrupts: agg.interrupts,
+          deaths: agg.deaths,
+          cooldowns: agg.cooldowns,
+          vulnerablePhases: agg.vulnerablePhases,
+          perMinute: agg.perMinute,
+          truncated: agg.truncated,
+        },
+      };
+    case 2:
+      return {
+        combat,
+        aggregate: {
+          cooldowns: agg.cooldowns,
+          interrupts: agg.interrupts,
+          deaths: agg.deaths,
+          vulnerablePhases: agg.vulnerablePhases,
+          truncated: agg.truncated,
+        },
+      };
+    case 3:
+      // 对比章节：结构化数据不含对比基准，由路由层注入 compareMeta 文本
+      return { combat };
+    case 4:
+    case 5:
+      // 意图识别/可改进点：需要爆发、易伤、死亡、打断、位移做规则判定
+      return {
+        combat,
+        aggregate: {
+          cooldowns: agg.cooldowns,
+          vulnerablePhases: agg.vulnerablePhases,
+          deaths: agg.deaths,
+          interrupts: agg.interrupts,
+          movement: agg.movement,
+          truncated: agg.truncated,
+        },
+      };
+    case 6:
+      return {
+        combat,
+        aggregate: {
+          deaths: agg.deaths,
+          interrupts: agg.interrupts,
+          vulnerablePhases: agg.vulnerablePhases,
+          truncated: agg.truncated,
+        },
+      };
+    default:
+      return { combat };
+  }
+}
+
+/** 构造完整用户消息（含章节切片 JSON 供 mock 解析 + 可读文本）。 */
 export function buildChapterUserMessage(chapterNo: number, log: ProcessedLog): string {
   const slice = sliceForChapter(chapterNo, log);
-  const json = JSON.stringify({
-    combat: log.combat,
-    aggregate: log.aggregate,
-  });
+  const json = JSON.stringify(sliceJsonForChapter(chapterNo, log));
   return `${slice}\n\n（以下为本场结构化数据 JSON，仅供引用证据：）\n\`\`\`json\n${json}\n\`\`\``;
 }
 

@@ -93,9 +93,22 @@ export async function askQuestion(
   const history = await repo.listMessages(userId, reportId, conv.id);
 
   const context = buildQaContext(logRecord.log);
+  // I-6：问答只发问答所需的聚合子集（爆发/减伤/打断/死亡/易伤/位移），
+  // 不再嵌入全量 aggregate（perMinute 与 timeline 已由 buildQaContext 紧凑摘要覆盖）。
+  const qaJson = JSON.stringify({
+    combat: logRecord.log.combat,
+    aggregate: {
+      cooldowns: logRecord.log.aggregate.cooldowns,
+      deaths: logRecord.log.aggregate.deaths,
+      interrupts: logRecord.log.aggregate.interrupts,
+      vulnerablePhases: logRecord.log.aggregate.vulnerablePhases,
+      movement: logRecord.log.aggregate.movement,
+      truncated: logRecord.log.aggregate.truncated,
+    },
+  });
   const userContent =
     `${context}\n\n（本场结构化数据摘要，仅供引用证据：）\n\`\`\`json\n` +
-    `${JSON.stringify({ combat: logRecord.log.combat, aggregate: logRecord.log.aggregate })}\n\`\`\`\n\n` +
+    `${qaJson}\n\`\`\`\n\n` +
     `${history.length ? buildHistoryBlock(history) + "\n" : ""}` +
     `玩家问题：${question}`;
 
