@@ -3,6 +3,7 @@ import type { SuspectedVerdict } from "@/lib/ai/intent-engine";
 import { embedOne } from "@/lib/kb/embedding";
 import { getKbStore } from "@/lib/kb";
 import { resolveActivePatch } from "@/lib/kb/retrieval";
+import { INTERNAL_SOURCE_URL } from "@/lib/kb/ingest";
 import type { KbDocument, KbMeta } from "@/lib/kb/types";
 
 /**
@@ -19,9 +20,19 @@ export interface CandidateMetaInput {
 }
 
 export function candidateSourceHash(input: CandidateMetaInput, verdict: SuspectedVerdict): string {
+  // L-RAG-3：哈希纳入 dungeon + origin + status，避免跨副本/跨状态的同 evidence 候选
+  // 被误去重（不同来源同内容应各自独立保留，供人工分别审核转正/弃用）。
   return createHash("sha256")
     .update(
-      `${input.class}|${input.spec}|${verdict.key}|${verdict.evidence.replace(/\s+/g, " ").trim()}`,
+      [
+        input.class,
+        input.spec,
+        input.dungeon,
+        "inferred",
+        "candidate",
+        verdict.key,
+        verdict.evidence.replace(/\s+/g, " ").trim(),
+      ].join("|"),
     )
     .digest("hex");
 }
@@ -43,7 +54,9 @@ export async function persistSuspectedCandidates(
       dungeon: "*",
       patch,
       type: "intent_pattern",
-      source_url: `https://wow-analyzer.local/inferred/${sourceHash.slice(0, 12)}`,
+      // L-RAG-2 / D4：推断条目无外部出处时用内部约定值，转正（candidate→active）时
+      // 必须由人工补真实出处链接后再注入。
+      source_url: INTERNAL_SOURCE_URL,
       origin: "inferred",
       status: "candidate",
     };

@@ -148,18 +148,23 @@ function fmt(sec: number): string {
 }
 
 /**
- * 提取用户消息中的【社区攻略参考】数据区（FR-11）。
+ * 提取用户消息中的【参考-<random>】…【/参考-<random>】数据区（FR-11）。
+ * 定界符为每次请求随机生成（M-RAG-1），故用样式正则定位而非固定文本。
  * 按 [片段N] 行切分成独立知识文本，供知识辅助判定扫描。
  */
 export function extractKbRegion(user: string): string[] {
-  const start = user.indexOf("【社区攻略参考】");
-  if (start < 0) return [];
-  const end = user.indexOf("【/社区攻略参考】", start);
-  const region = user.slice(start, end >= 0 ? end : user.length);
-  return region
+  const startRe = /【参考-[0-9a-fA-F-]{36}】/;
+  const endRe = /【\/参考-[0-9a-fA-F-]{36}】/;
+  const sm = startRe.exec(user);
+  if (!sm) return [];
+  const bodyStart = sm.index + sm[0].length;
+  const em = endRe.exec(user.slice(bodyStart));
+  const bodyEnd = em ? bodyStart + em.index : user.length;
+  return user
+    .slice(bodyStart, bodyEnd)
     .split(/\n(?=\[片段\d+\])/)
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter((s) => s.startsWith("[片段"));
 }
 
 class MockAiProvider implements AiProvider {

@@ -39,7 +39,13 @@ create index if not exists kb_documents_status_idx
 
 -- 服务端专用：显式回收客户端角色权限（即便未来默认授权策略变化也安全）
 revoke all on table public.kb_documents from anon, authenticated;
+
+-- 权限收敛（M-RAG-2）：PostgreSQL CREATE FUNCTION 默认授予 PUBLIC EXECUTE，
+-- 需同时回收 PUBLIC 与 anon/authenticated，仅 service_role 可执行。
+-- revoke/grant 幂等，可重复执行。
+revoke all on function public.match_kb_documents(vector, text, text, text, text, text, int) from public;
 revoke all on function public.match_kb_documents(vector, text, text, text, text, text, int) from anon, authenticated;
+grant execute on function public.match_kb_documents(vector, text, text, text, text, text, int) to service_role;
 
 -- 余弦相似度检索：按 class/spec/dungeon/patch/status 过滤，top-k 由 match_count 控制。
 -- patch 过滤约定：match_patch = 活跃补丁；meta.patch = 'general' 的内容始终可见。

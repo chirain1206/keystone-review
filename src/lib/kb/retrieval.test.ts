@@ -5,8 +5,7 @@ import os from "node:os";
 import {
   buildKbQueryText,
   formatKbContext,
-  KB_DELIMITER_END,
-  KB_DELIMITER_START,
+  generateKbDelimiters,
   retrieveKnowledge,
   resolveActivePatch,
 } from "@/lib/kb/retrieval";
@@ -107,7 +106,7 @@ describe("查询构造与格式化（T16）", () => {
     expect(t).toContain("战术意图");
   });
 
-  it("formatKbContext：定界包裹 + 来源标注 + ≤5 条", () => {
+  it("formatKbContext：随机定界包裹 + 来源标注 + ≤5 条", () => {
     const hits = Array.from({ length: 8 }, (_, i) => ({
       id: `id-${i}`,
       chunkText: `知识片段 ${i}`,
@@ -123,9 +122,10 @@ describe("查询构造与格式化（T16）", () => {
         status: "active" as const,
       },
     }));
-    const formatted = formatKbContext(hits);
-    expect(formatted.startsWith(KB_DELIMITER_START)).toBe(true);
-    expect(formatted.endsWith(KB_DELIMITER_END)).toBe(true);
+    const delims = generateKbDelimiters();
+    const formatted = formatKbContext(hits, delims);
+    expect(formatted.startsWith(delims.start)).toBe(true);
+    expect(formatted.endsWith(delims.end)).toBe(true);
     expect(formatted).toContain("参考社区攻略");
     expect(formatted).toContain("https://example.com/kb/0");
     expect(formatted.split("[片段").length - 1).toBe(5); // 最多 5 条
@@ -145,7 +145,7 @@ describe("检索注入与过滤（T16）", () => {
     expect(kb!.hits.length).toBeLessThanOrEqual(5);
     expect(kb!.hits.every((h) => h.meta.status === "active")).toBe(true);
     expect(kb!.hits.every((h) => h.meta.patch === "12.1" || h.meta.patch === "general")).toBe(true);
-    expect(kb!.formatted).toContain(KB_DELIMITER_START);
+    expect(kb!.formatted).toContain(kb!.delimiters.start);
   });
 
   it("候选条目绝不注入（status=candidate 被过滤）", async () => {

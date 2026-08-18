@@ -4,12 +4,12 @@ import type { Conversation } from "@/lib/db/types";
 import {
   buildHistoryBlock,
   buildQaContext,
+  buildQaSystemPrompt,
   QA_MAX_ROUNDS,
-  QA_SYSTEM_PROMPT,
   ROUNDS_EXCEEDED_MESSAGE,
 } from "@/lib/qa/prompts";
 import { detectViolation, REFUSAL_MESSAGE } from "@/lib/qa/guard";
-import { retrieveKnowledge } from "@/lib/kb/retrieval";
+import { generateKbDelimiters, retrieveKnowledge } from "@/lib/kb/retrieval";
 
 /**
  * 问答服务（T7，FR-6）。
@@ -113,15 +113,20 @@ export async function askQuestion(
     `${history.length ? buildHistoryBlock(history) + "\n" : ""}` +
     `玩家问题：${question}`;
 
-  // FR-11：问答检索注入社区知识（top-k≤5、定界包裹、来源标注；失败/未命中降级）
+  // FR-11：问答检索注入社区知识（top-k≤5、随机定界包裹、来源标注；失败/未命中降级）。
+  // 定界符先生成，与数据区共用同一对随机 token（M-RAG-1 随机定界）。
+  const kbDelims = generateKbDelimiters();
   let userContentWithKb = userContent;
   try {
-    const kb = await retrieveKnowledge({
-      playerClass: report.playerClass,
-      playerSpec: report.spec,
-      dungeon: report.dungeon,
-      question,
-    });
+    const kb = await retrieveKnowledge(
+      {
+        playerClass: report.playerClass,
+        playerSpec: report.spec,
+        dungeon: report.dungeon,
+        question,
+      },
+      kbDelims,
+    );
     if (kb) {
       userContentWithKb = userContent.replace(`玩家问题：${question}`, `${kb.formatted}\n\n玩家问题：${question}`);
     }
@@ -141,7 +146,7 @@ export async function askQuestion(
   try {
     const result = await ai.chat(
       [
-        { role: "system", content: QA_SYSTEM_PROMPT },
+        { role: "system", content: buildQaSystemPrompt(kbDelims) },
         { role: "user", content: userContentWithKb },
       ],
       { maxTokens: 1200, temperature: 0.4 },

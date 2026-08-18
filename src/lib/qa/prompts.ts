@@ -1,6 +1,6 @@
 import type { ProcessedLog } from "@/lib/parser/schema";
 import type { Message } from "@/lib/db/types";
-import { KB_INJECTION_RULES } from "@/lib/kb/retrieval";
+import { kbInjectionRules, type KbDelimiters } from "@/lib/kb/retrieval";
 
 /**
  * 问答提示词与上下文组装（T7，FR-6）。
@@ -11,7 +11,12 @@ import { KB_INJECTION_RULES } from "@/lib/kb/retrieval";
  *  - FR-11：注入【社区攻略参考】数据区（数据/指令隔离）
  */
 
-export const QA_SYSTEM_PROMPT = `你是《魔兽世界》大秘境复盘教练的问答助手，只针对"当前这一场战斗日志"回答问题。
+/**
+ * 问答系统提示词。FR-11 知识数据区隔离声明需引用本次注入的随机定界符，
+ * 故由调用方（qa/service.ts）在检索前先生成定界符，再据此构造提示词。
+ */
+export function buildQaSystemPrompt(kbDelims: KbDelimiters): string {
+  return `你是《魔兽世界》大秘境复盘教练的问答助手，只针对"当前这一场战斗日志"回答问题。
 回答规则：
 1. 简体中文；技能名/专精名/副本名保留游戏内英文原名。
 2. 凡引用本场 log 证据，必须给出时间戳（分:秒，与原始日志一致）与技能名；禁止编造数据。
@@ -20,7 +25,8 @@ export const QA_SYSTEM_PROMPT = `你是《魔兽世界》大秘境复盘教练�
 5. 结合上文连续追问时保持一致；回答控制在 400 字以内，聚焦问题本身。
 6. 用户问跨场/上分等超出本场范围的问题：基于本场数据给出有限建议，并提示"跨场综合分析将在后续版本提供"。
 7. 涉及职业打法/战术合理性判断时，可参考【社区攻略参考】数据区；引用时必须标注"参考社区攻略"。
-${KB_INJECTION_RULES}`;
+${kbInjectionRules(kbDelims)}`;
+}
 
 const fmt = (sec: number) => {
   const m = Math.floor(sec / 60);

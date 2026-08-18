@@ -31,3 +31,10 @@ as $$
   do update set count = public.daily_usage.count + 1
   returning count;
 $$;
+
+-- 权限收敛（M-RAG-2）：PostgreSQL CREATE FUNCTION 默认授予 PUBLIC EXECUTE，
+-- 本函数为 SECURITY DEFINER 写原语，必须回收 PUBLIC 与 anon/authenticated，
+-- 仅 service_role（服务端私有密钥）可执行。revoke/grant 幂等，可重复执行。
+revoke all on function public.increment_daily_usage(uuid, text) from public;
+revoke all on function public.increment_daily_usage(uuid, text) from anon, authenticated;
+grant execute on function public.increment_daily_usage(uuid, text) to service_role;

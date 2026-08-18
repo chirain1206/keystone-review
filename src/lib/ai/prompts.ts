@@ -1,6 +1,6 @@
 import type { ProcessedLog } from "@/lib/parser/schema";
 import { CHAPTER_OUTPUT_TOKEN_CAP, estimateTokens, TOKEN_BUDGET_PER_COMBAT } from "@/lib/ai/tokens";
-import { KB_INJECTION_RULES } from "@/lib/kb/retrieval";
+import { kbInjectionRules, type KbDelimiters } from "@/lib/kb/retrieval";
 
 /**
  * 章节提示词与数据切片（T5，ADR-001）。
@@ -30,13 +30,17 @@ export const CHAPTER_SPECIFIC_INSTRUCTIONS: Record<number, string> = {
 - "领域知识依赖型意图"（仅凭 log 无法判断、需要职业打法知识，如：怪聚齐前先打资源/赌 buff 触发、聚齐后带最佳增益爆发）→ 结合【社区攻略参考】数据区内容判定，并标注"参考社区攻略"。
 - 第二档"可改进点"：无合理意图（如爆发期间长时间空转、漏断关键读条导致减员）→ 不得写进本章，应留给第 4 章可改进点。
 - 第三档"疑似高阶技巧"：某异常操作证据链完整（时间戳+技能/单位+前后文完整），但知识库无法解释、且没有明显失误证据 → 输出"🔎 疑似高阶技巧（MM:SS）：证据…；推断理由…"，明确标注"不武断判为失误"，绝不可将其列入第 4 章失误清单。
-${KB_INJECTION_RULES}
 输出格式：每条以"✅ 正确决策（MM:SS）：操作内容 —— 意图解释"列出；"疑似高阶技巧"以"🔎 疑似高阶技巧（MM:SS）："列出；若无可识别样本则如实说明。`,
   6: `【章节6】下一步练习建议：给出 1–3 条可执行的具体练习（带场景与方法），聚焦本场暴露的问题。`,
 };
 
-export function buildChapterSystemPrompt(chapterNo: number): string {
-  return `${SHARED_SYSTEM_PREFIX}\n${CHAPTER_SPECIFIC_INSTRUCTIONS[chapterNo]}`;
+/**
+ * 构造章节系统提示词。FR-11 知识数据区的隔离声明需引用本次注入的随机定界符，
+ * 故第 5 章调用方需传入与数据区同一对定界符（kbDelims）；非知识注入章节不传。
+ */
+export function buildChapterSystemPrompt(chapterNo: number, kbDelims?: KbDelimiters): string {
+  const base = `${SHARED_SYSTEM_PREFIX}\n${CHAPTER_SPECIFIC_INSTRUCTIONS[chapterNo]}`;
+  return kbDelims ? `${base}\n${kbInjectionRules(kbDelims)}` : base;
 }
 
 /** 战斗概览（所有章节共享的输入前缀，提升上下文缓存命中率）。 */

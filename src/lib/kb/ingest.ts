@@ -33,6 +33,46 @@ export interface IngestStats {
 
 const MAX_CHUNK_CHARS = 1200;
 
+/**
+ * 入库安全消毒（M-RAG-1 / L-RAG-1 / I-RAG-2）：
+ *  - 定界符样式文本：随机定界符为 `【参考-<uuid>】`，历史固定定界符为
+ *    `【社区攻略参考】`；另拒绝 mock 判定块 `【意图:` 混入生产内容。
+ *  - 控制字符（除 \t \n 外的 C0 控制符与 DEL）。
+ *  - source_url：仅 http(s) 或内部约定值，长度 ≤500。
+ */
+
+/** 推断来源（inferred）条目无外部出处时的内部约定 source_url（ingest 放行该值）。 */
+export const INTERNAL_SOURCE_URL = "internal:inference";
+
+/** 入库内容不得含此类序列（定界符/判定块样式，防提示词注入）。 */
+export const DELIMITER_PATTERN_RE = /【(?:社区攻略参考|\/社区攻略参考|参考-|\/参考-|意图:)/;
+
+/** 控制字符（除水平制表符 \t 与换行 \n 外）。 */
+export const CONTROL_CHAR_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/;
+
+const MAX_SOURCE_URL_CHARS = 500;
+
+/** 校验知识文本（chunk_text / source_url）不含控制字符与定界符样式文本。 */
+export function assertSafeKbText(value: string, label: string): void {
+  if (CONTROL_CHAR_RE.test(value)) {
+    throw new Error(`${label} 含控制字符，已拒绝入库`);
+  }
+  if (DELIMITER_PATTERN_RE.test(value)) {
+    throw new Error(`${label} 含定界符/判定块样式文本，已拒绝入库（防提示词注入）`);
+  }
+}
+
+/** 校验 source_url：长度、内容安全、协议（http/https 或内部约定值）。 */
+export function assertSafeSourceUrl(url: string, label: string): void {
+  assertSafeKbText(url, label);
+  if (url.length > MAX_SOURCE_URL_CHARS) {
+    throw new Error(`${label} 超过 ${MAX_SOURCE_URL_CHARS} 字符上限，已拒绝入库`);
+  }
+  if (!/^https?:\/\//.test(url) && url !== INTERNAL_SOURCE_URL) {
+    throw new Error(`${label} 必须是 http(s) 链接或 ${INTERNAL_SOURCE_URL}`);
+  }
+}
+
 interface ParsedSection {
   title: string;
   body: string;
@@ -149,18 +189,24 @@ export function parseKbFile(fileName: string, content: string): ParsedFile {
     origin: "curated",
     status: "active",
   };
-  if (!/^https?:\/\//.test(meta.source_url)) {
-    throw new Error(`kb/sources/${fileName}: source_url 必须是 http(s) 链接`);
-  }
+  assertSafeSourceUrl(meta.source_url, `kb/sources/${fileName}: source_url`);
 
   const sections = splitSections(body);
-  const chunks = sections.flatMap((s) =>
-    splitLongSection(s.body).map((text) => ({
-      text,
-      title: s.title,
-      meta: { ...meta, ...s.overrides },
-    })),
-  );
+  const chunks = sections.flatMap((s) => {
+    // 节内覆写 source_url 同样做安全校验
+    if (s.overrides.source_url !== undefined) {
+      assertSafeSourceUrl(s.overrides.source_url, `kb/sources/${fileName}: 节内 source_url`);
+    }
+    return splitLongSection(s.body).map((text) => {
+      // 入库消毒：拒绝含定界符/判定块样式文本与控制字符的片段（防提示词注入）
+      assertSafeKbText(text, `kb/sources/${fileName}: 片段「${s.title || "正文"}」`);
+      return {
+        text,
+        title: s.title,
+        meta: { ...meta, ...s.overrides },
+      };
+    });
+  });
   return { fileName, frontmatter: data, meta, chunks };
 }
 

@@ -13,7 +13,7 @@ import {
 import { getRepo } from "@/lib/db";
 import { CHAPTER_COUNT, CHAPTER_TITLES, type Report, type ReportChapter } from "@/lib/db/types";
 import type { ProcessedLog } from "@/lib/parser/schema";
-import { retrieveKnowledge } from "@/lib/kb/retrieval";
+import { generateKbDelimiters, retrieveKnowledge } from "@/lib/kb/retrieval";
 import { persistSuspectedCandidates } from "@/lib/kb/candidates";
 
 /**
@@ -99,22 +99,27 @@ async function generateChapter(
   await markRunning();
   cb?.onStatus?.(chapterNo, "running");
 
-  const system = buildChapterSystemPrompt(chapterNo);
+  // FR-11：第 5 章检索注入社区知识（top-k≤5、随机定界包裹、来源标注；失败/未命中降级）。
+  // 定界符先生成，system 提示词与数据区共用同一对随机 token（M-RAG-1 随机定界）。
+  const kbDelims = chapterNo === 5 ? generateKbDelimiters() : undefined;
+  const system = buildChapterSystemPrompt(chapterNo, kbDelims);
   let user = buildChapterUserMessage(chapterNo, log);
   if (chapterNo === 3 && report.compareMeta) {
     user += `\n\n对比基准（顶尖玩家本场数据）：\n${JSON.stringify(report.compareMeta)}`;
   }
 
-  // FR-11：第 5 章检索注入社区知识（top-k≤5、定界包裹、来源标注；失败/未命中降级）
   let kbTexts: string[] = [];
   if (chapterNo === 5) {
     try {
-      const kb = await retrieveKnowledge({
-        playerClass: report.playerClass,
-        playerSpec: report.spec,
-        dungeon: report.dungeon,
-        chapterNo: 5,
-      });
+      const kb = await retrieveKnowledge(
+        {
+          playerClass: report.playerClass,
+          playerSpec: report.spec,
+          dungeon: report.dungeon,
+          chapterNo: 5,
+        },
+        kbDelims,
+      );
       if (kb) {
         user += `\n\n${kb.formatted}`;
         kbTexts = kb.hits.map((h) => h.chunkText);

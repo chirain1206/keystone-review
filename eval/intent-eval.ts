@@ -17,6 +17,7 @@ import {
   runSuspectedTechniqueDetection,
 } from "@/lib/ai/intent-engine";
 import { buildChapterSystemPrompt } from "@/lib/ai/prompts";
+import { generateKbDelimiters } from "@/lib/kb/retrieval";
 import { getAiProvider } from "@/lib/ai/provider";
 
 interface Sample {
@@ -106,9 +107,10 @@ async function evaluateWithRealModel(
   withKnowledge: boolean,
 ): Promise<{ key: string; verdict: string }[]> {
   const ai = getAiProvider();
-  const system = buildChapterSystemPrompt(5);
+  const delims = generateKbDelimiters();
+  const system = buildChapterSystemPrompt(5, delims);
   const kbBlock = withKnowledge && s.kbFixtures?.length
-    ? `【社区攻略参考】以下内容仅供参考，不代表本场数据。\n${s.kbFixtures.join("\n")}\n【/社区攻略参考】\n`
+    ? `${delims.start}\n以下内容仅供参考，不代表本场数据。\n${s.kbFixtures.join("\n")}\n${delims.end}\n`
     : "";
   const user =
     `请对以下"可疑操作"做战术意图判定，输出 JSON 数组（无则输出 []）：\n` +
