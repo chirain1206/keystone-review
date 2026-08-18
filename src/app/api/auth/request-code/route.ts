@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createAuthProvider } from "@/lib/auth/provider";
 import { checkRateLimit } from "@/lib/auth/guard";
+import { getClientIp } from "@/lib/net/client-ip";
 import { verifyTurnstile } from "@/lib/turnstile/adapter";
 
 export const maxDuration = 30;
@@ -16,7 +17,7 @@ const bodySchema = z.object({
  * 频控：同一邮箱 10 分钟内最多 3 次；同一 IP 10 分钟内最多 5 次。
  */
 export async function POST(req: NextRequest) {
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ip = getClientIp(req);
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "请输入有效的邮箱地址" }, { status: 400 });

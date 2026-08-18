@@ -1,4 +1,4 @@
-import { envConfig } from "@/lib/env";
+import { envConfig, requireProductionEnv } from "@/lib/env";
 import { estimateTokens } from "@/lib/ai/tokens";
 import { runIntentEngine } from "@/lib/ai/intent-engine";
 
@@ -73,7 +73,9 @@ class DeepSeekProvider implements AiProvider {
     });
     if (!res.ok || !res.body) {
       const body = await res.text().catch(() => "");
-      throw new Error(`DeepSeek API ${res.status}: ${body.slice(0, 300)}`);
+      // L-4：上游细节只进服务端日志，抛给调用方的是不泄露内部信息的友好文案
+      console.error(`[ai] DeepSeek API ${res.status}: ${body.slice(0, 300)}`);
+      throw new Error("AI 服务暂时不可用，请稍后重试");
     }
 
     let content = "";
@@ -417,6 +419,8 @@ let cached: AiProvider | null = null;
 
 export function getAiProvider(): AiProvider {
   if (cached) return cached;
+  // 生产 fail-fast：缺 DeepSeek 密钥直接抛错，禁止静默回退 mock 生成（M-2）
+  requireProductionEnv("DEEPSEEK_API_KEY");
   cached = envConfig.deepseekApiKey ? new DeepSeekProvider() : new MockAiProvider();
   return cached;
 }

@@ -30,6 +30,16 @@ function client(): SupabaseClient {
   return c;
 }
 
+/**
+ * 用户作用域查询统一守卫（M-1 防漏加固）：
+ * 服务端经 service role 连接（RLS 对服务端路径不生效），隔离 100% 依赖应用层
+ * user_id 过滤。任何接受 userId 的查询方法入口强制断言，防止未来新查询漏传 userId
+ * 导致跨用户越权（IDOR）。
+ */
+function assertUserId(userId: string): void {
+  if (!userId) throw new Error("userId is required for user-scoped query");
+}
+
 const REPORTS_COLS = "id,user_id,source_type,dungeon,level,spec,player_name,player_class,result,status,compare_meta,created_at,updated_at";
 
 function toReport(r: Record<string, unknown>): Report {
@@ -67,6 +77,7 @@ export class SupabaseRepo implements Repo {
   }
 
   async getProfile(userId: string): Promise<Profile | null> {
+    assertUserId(userId);
     const { data } = await client().from("profiles").select("*").eq("id", userId).maybeSingle();
     if (!data) return null;
     return {
@@ -100,6 +111,7 @@ export class SupabaseRepo implements Repo {
   }
 
   async getReport(userId: string, reportId: string): Promise<Report | null> {
+    assertUserId(userId);
     const { data } = await client()
       .from("reports")
       .select(REPORTS_COLS)
@@ -119,6 +131,7 @@ export class SupabaseRepo implements Repo {
   }
 
   async listReportsByUser(userId: string): Promise<Report[]> {
+    assertUserId(userId);
     const { data } = await client()
       .from("reports")
       .select(REPORTS_COLS)
@@ -135,6 +148,7 @@ export class SupabaseRepo implements Repo {
   }
 
   async deleteReport(userId: string, reportId: string): Promise<boolean> {
+    assertUserId(userId);
     const { count } = await client()
       .from("reports")
       .delete({ count: "exact" })
@@ -156,6 +170,7 @@ export class SupabaseRepo implements Repo {
   }
 
   async getProcessedLog(userId: string, reportId: string): Promise<ProcessedLogRecord | null> {
+    assertUserId(userId);
     const r = await this.getReport(userId, reportId);
     if (!r) return null;
     return this.getProcessedLogByReportId(reportId);
@@ -222,6 +237,7 @@ export class SupabaseRepo implements Repo {
   }
 
   async getChapters(userId: string, reportId: string): Promise<ReportChapter[]> {
+    assertUserId(userId);
     const r = await this.getReport(userId, reportId);
     if (!r) return [];
     return this.getChaptersByReportId(reportId);
@@ -253,6 +269,7 @@ export class SupabaseRepo implements Repo {
     reportId: string,
     chapterNo: number,
   ): Promise<ReportChapter | null> {
+    assertUserId(userId);
     const chapters = await this.getChapters(userId, reportId);
     return chapters.find((c) => c.chapterNo === chapterNo) ?? null;
   }
@@ -268,6 +285,7 @@ export class SupabaseRepo implements Repo {
   }
 
   async getConversation(userId: string, conversationId: string): Promise<Conversation | null> {
+    assertUserId(userId);
     const { data } = await client()
       .from("conversations")
       .select("*, reports!inner(user_id)")
@@ -313,6 +331,7 @@ export class SupabaseRepo implements Repo {
     reportId: string,
     conversationId?: string,
   ): Promise<Message[]> {
+    assertUserId(userId);
     const r = await this.getReport(userId, reportId);
     if (!r) return [];
     return this.listMessagesByReportId(reportId, conversationId);
@@ -340,6 +359,17 @@ export class SupabaseRepo implements Repo {
       .eq("conversation_id", conversationId)
       .eq("role", "user");
     return count ?? 0;
+  }
+
+  // ---- 每日额度计数（M-3）----
+  async incrementDailyUsage(userId: string, day: string): Promise<number> {
+    assertUserId(userId);
+    const { data, error } = await client().rpc("increment_daily_usage", {
+      p_user: userId,
+      p_day: day,
+    });
+    if (error) throw new Error(`每日额度计数失败：${error.message}`);
+    return data as number;
   }
 
   // ---- shares ----
@@ -387,6 +417,7 @@ export class SupabaseRepo implements Repo {
   }
 
   async listShares(userId: string, reportId: string): Promise<Share[]> {
+    assertUserId(userId);
     const r = await this.getReport(userId, reportId);
     if (!r) return [];
     const { data } = await client().from("shares").select("*").eq("report_id", reportId);
@@ -406,6 +437,7 @@ export class SupabaseRepo implements Repo {
     token: string,
     enabled: boolean,
   ): Promise<void> {
+    assertUserId(userId);
     const r = await this.getReport(userId, reportId);
     if (!r) return;
     await client()

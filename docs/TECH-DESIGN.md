@@ -30,7 +30,7 @@
 | --- | --- | --- | --- |
 | 框架 | **Next.js（App Router）+ TypeScript**，前后端一体 | 一个仓库、一次部署、一种语言；AI 辅助开发最熟悉；Vercel 一键部署 | 静态前端+独立后端（多一套部署运维，违背 KISS）；SvelteKit（AI 熟悉度低） |
 | 部署 | **Vercel Hobby（免费档）**，fluid compute，函数 maxDuration=60s | 免费；流式响应可跑满时长；与 Next.js 原生契合 | Render 免费档（15 分钟休眠冷启动，对 p95 指标致命）；纯 Cloudflare Workers（CPU 计费模型不适合解析类代码，但作为流式接口兜底） |
-| 数据/账号 | **Supabase 免费层**：Postgres + Auth（passwordless 邮箱验证码 OTP，天然满足"无密码"）+ Storage（几乎不用，原始文件不上传） | 免费额度充足（DB 500MB、MAU 50k）；OTP 现成；RLS 行级安全天然实现"用户 A 看不到用户 B" | 自建后端鉴权（工作量大）；Firebase（国内访问差） |
+| 数据/账号 | **Supabase 免费层**：Postgres + Auth（passwordless 邮箱验证码 OTP，天然满足"无密码"）+ Storage（几乎不用，原始文件不上传） | 免费额度充足（DB 500MB、MAU 50k）；OTP 现成；RLS 行级安全（仅对 anon 客户端直连路径生效） | 自建后端鉴权（工作量大）；Firebase（国内访问差） |
 | 邮件 | **Resend 免费档 SMTP**（3000 封/月） | Supabase 内置邮件限流（约 2 封/小时/用户）且易进垃圾箱；Resend 免费档够用 | 自建邮件服务（过度设计） |
 | AI | **DeepSeek deepseek-chat，流式输出，开启上下文缓存** | 流式支持、128K 上下文、价格极低（输入 $0.28/M，缓存命中 $0.028/M，输出 $0.42/M）；缓存命中价是未命中的 1/10 | GPT/Claude（贵 5–10 倍）；本地模型（个人开发者不可运维） |
 | 日志解析 | **自研 TypeScript 解析器**（浏览器 Web Worker 内分块解析 WoWCombatLog.txt，格式为公开规范 COMBAT_LOG_EVENT） | 避开许可证风险；只解析需要的子集，简单可控 | WoWAnalyzer 解析器（**AGPL-3.0 传染性协议，服务端引用有开源义务风险**）；npm wow-combat-log-parser（活跃度低、许可证未确认） |
@@ -48,7 +48,7 @@
 Vercel（Next.js 服务端，免费档 60s/函数）
  ├─ API：报告创建 / 章节生成(流式) / 问答(流式) / 历史 / 分享
  ├─ 调用：DeepSeek API（流式）、WCL v2 API（轻量）、Turnstile 验证
- └─ 数据：Supabase Postgres（RLS 隔离）
+ └─ 数据：Supabase Postgres（应用层 user_id 隔离；RLS 兜底 anon 直连路径）
 
 外部服务
  ├─ DeepSeek：deepseek-chat 流式（报告生成、问答）
@@ -63,7 +63,7 @@ Vercel（Next.js 服务端，免费档 60s/函数）
 - **成本**：每章只发该章相关的数据片段（不是全量 50K），共享前缀命中 DeepSeek 上下文缓存，单次复盘总成本约 $0.02–0.03。
 - **放弃项**：串行逐章（超时）；单次生成整份报告（输出 6–12K token，100–200s，顶破 60s）。
 
-## 数据模型（Supabase Postgres，全部 RLS 按 user_id 隔离）
+## 数据模型（Supabase Postgres，服务端经 service role 连接，数据隔离由应用层显式 user_id 过滤保证；RLS 仅对 anon 客户端直连路径生效）
 
 | 表 | 关键字段 | 说明 |
 | --- | --- | --- |

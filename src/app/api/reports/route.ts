@@ -46,6 +46,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "请先登录" }, { status: 401 });
   }
 
+  // L-6：请求体大小显式上限（2MB），超限直接 413（content-length 缺失时不拦截，
+  // 由下方 zod + token 预算再校验兜底）。
+  const contentLength = Number(req.headers.get("content-length") ?? "0");
+  const MAX_BODY_BYTES = 2 * 1024 * 1024;
+  if (contentLength > MAX_BODY_BYTES) {
+    return NextResponse.json({ ok: false, error: "请求数据过大" }, { status: 413 });
+  }
+
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "请求数据格式不正确" }, { status: 400 });

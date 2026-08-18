@@ -41,9 +41,9 @@ export async function POST(
         })),
       });
     } catch (err) {
-      writer.send("error", {
-        message: err instanceof Error ? err.message : "服务繁忙，请稍后重试",
-      });
+      // L-4：SSE 只回传友好文案，详细错误只写服务端日志（避免泄露上游细节）
+      console.error(`[report] 生成失败（report=${id}）:`, err);
+      writer.send("error", { message: "生成失败，请稍后重试" });
     } finally {
       writer.close();
     }

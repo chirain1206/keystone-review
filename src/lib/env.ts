@@ -43,3 +43,52 @@ export const envConfig = {
 export function isServer(): boolean {
   return typeof window === "undefined";
 }
+
+// ---------- 生产环境 fail-fast（M-2） ----------
+
+/** 是否为生产环境（运行时动态判定，便于测试注入）。 */
+export function isProduction(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
+/** 生产环境必需的密钥/配置清单（缺任一 → 拒绝以 mock 降级运行）。 */
+const PRODUCTION_REQUIRED_ENV: { key: string; label: string }[] = [
+  { key: "NEXT_PUBLIC_SUPABASE_URL", label: "NEXT_PUBLIC_SUPABASE_URL" },
+  { key: "NEXT_PUBLIC_SUPABASE_ANON_KEY", label: "NEXT_PUBLIC_SUPABASE_ANON_KEY" },
+  { key: "SUPABASE_SERVICE_ROLE_KEY", label: "SUPABASE_SERVICE_ROLE_KEY" },
+  { key: "RESEND_API_KEY", label: "RESEND_API_KEY" },
+  { key: "EMAIL_FROM", label: "EMAIL_FROM" },
+  { key: "DEEPSEEK_API_KEY", label: "DEEPSEEK_API_KEY" },
+  { key: "TURNSTILE_SECRET_KEY", label: "TURNSTILE_SECRET_KEY" },
+  { key: "NEXT_PUBLIC_TURNSTILE_SITE_KEY", label: "NEXT_PUBLIC_TURNSTILE_SITE_KEY" },
+  { key: "WCL_CLIENT_ID", label: "WCL_CLIENT_ID" },
+  { key: "WCL_CLIENT_SECRET", label: "WCL_CLIENT_SECRET" },
+];
+
+/**
+ * 校验生产必需配置；返回缺失项列表（非生产环境恒为空数组）。
+ * 只读 process.env 的"键名"与 APP_URL 前缀，绝不把密钥值写入返回值。
+ */
+export function validateProductionEnv(): string[] {
+  if (!isProduction()) return [];
+  const missing: string[] = [];
+  for (const { key, label } of PRODUCTION_REQUIRED_ENV) {
+    if (!process.env[key]) missing.push(label);
+  }
+  const appUrl = process.env.APP_URL ?? "";
+  if (!appUrl.startsWith("https://")) {
+    missing.push("APP_URL（必须以 https:// 开头）");
+  }
+  return missing;
+}
+
+/** 生产环境缺失指定密钥时抛错（禁止静默 mock 回退）；非生产环境为 no-op。 */
+export function requireProductionEnv(...keys: string[]): void {
+  if (!isProduction()) return;
+  const missing = keys.filter((k) => !process.env[k]);
+  if (missing.length > 0) {
+    throw new Error(
+      `生产环境缺少必要配置，已拒绝以 mock 降级运行（安全 fail-fast）：${missing.join(", ")}`,
+    );
+  }
+}

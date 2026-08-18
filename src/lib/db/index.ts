@@ -1,4 +1,4 @@
-import { envConfig } from "@/lib/env";
+import { envConfig, requireProductionEnv } from "@/lib/env";
 import type { Repo } from "@/lib/db/repo";
 import { FileRepo } from "@/lib/db/file-repo";
 import { SupabaseRepo } from "@/lib/db/supabase-repo";
@@ -14,6 +14,12 @@ let instance: Repo | null = null;
 
 export function getRepo(): Repo {
   if (instance) return instance;
+  // 生产 fail-fast：缺 Supabase 任一密钥直接抛错，禁止静默回退 FileRepo（M-2）
+  requireProductionEnv(
+    "NEXT_PUBLIC_SUPABASE_URL",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+  );
   instance =
     envConfig.supabaseEnabled && envConfig.supabaseServiceRoleKey
       ? new SupabaseRepo()

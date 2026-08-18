@@ -1,4 +1,4 @@
-import { envConfig } from "@/lib/env";
+import { envConfig, requireProductionEnv } from "@/lib/env";
 
 /**
  * Cloudflare Turnstile 人机验证适配器（T9）。
@@ -11,6 +11,8 @@ export async function verifyTurnstile(
   token: string | undefined,
   ip: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  // 生产 fail-fast：缺密钥直接抛错，禁止静默放行（M-2）
+  requireProductionEnv("TURNSTILE_SECRET_KEY");
   if (!envConfig.turnstileSecretKey) {
     // mock/开发模式：未配置密钥时跳过（真实配置后自动启用）
     return { ok: true };

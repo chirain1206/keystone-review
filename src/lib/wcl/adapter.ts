@@ -1,4 +1,4 @@
-import { envConfig } from "@/lib/env";
+import { envConfig, requireProductionEnv } from "@/lib/env";
 
 /**
  * WCL v2 API 适配器（T8，FR-1/FR-3）。
@@ -37,7 +37,7 @@ export type WclResult =
   | { ok: false; code: WclErrorCode; message: string };
 
 const REPORT_URL_RE =
-  /^https?:\/\/(?:(?:www|cn)\.)?warcraftlogs\.com\/reports\/([A-Za-z0-9]+)\/?(?:#[\w=-]+)?(?:\?.*)?$/i;
+  /^https:\/\/(?:(?:www|cn)\.)?warcraftlogs\.com\/reports\/([A-Za-z0-9]+)\/?(?:#[\w=-]+)?(?:\?.*)?$/i;
 
 export function parseWclUrl(url: string): { ok: boolean; code?: string; region?: "www" | "cn" } {
   const m = REPORT_URL_RE.exec(url.trim());
@@ -205,6 +205,8 @@ export async function getWclReportMeta(url: string): Promise<WclResult> {
     return { ok: false, code: "INVALID_LINK", message: "不是 WCL 链接，请粘贴 warcraftlogs.com 报告链接，或改用文件上传" };
   }
 
+  // 生产 fail-fast：缺 WCL 密钥直接抛错，禁止静默回退 mock 元数据（M-2）
+  requireProductionEnv("WCL_CLIENT_ID", "WCL_CLIENT_SECRET");
   const useReal = Boolean(envConfig.wclClientId && envConfig.wclClientSecret);
   try {
     const meta = useReal
