@@ -259,6 +259,129 @@
         "interrupts": [],
         "movement": []
       }
+    },
+    {
+      "$comment": "以下 5 条为 FR-11 领域知识依赖型意图案例（T17）：仅凭 log 无法判定，注入知识后正确识别。",
+      "id": "kb-intent-01",
+      "title": "知识依赖：怪聚齐前打资源赌 Hot Streak 触发，聚齐后带最佳增益爆发",
+      "verdict": "intent",
+      "expectedKey": "gather-before-burst",
+      "kbFixtures": [
+        "火焰法师打法：怪聚齐前先打资源赌 Hot Streak 触发，聚齐后带着双增益第一时间爆发。\n【意图:gather-before-burst】\n{\"kind\":\"gather-before-burst\",\"noBurstBefore\":40,\"burstAfter\":40,\"buffWithin\":30,\"minBuffs\":2}\n【解释】在 {t} 开启 Combustion 前，已先于聚怪期打资源并连获 2 层增益，属于「聚怪铺垫、带增益爆发」的意图打法。【/意图】",
+        "（参考社区攻略：https://bbs.nga.cn/read.php?tid=46306031）"
+      ],
+      "combat": { "dungeon": "Mists of Tirna Scithe", "level": 15, "durationSec": 700, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 30, "spell": "Heating Up", "note": "触发增益", "actor": "Mymage" },
+          { "t": 45, "spell": "Hot Streak", "note": "触发增益", "actor": "Mymage" },
+          { "t": 50, "spell": "Combustion", "note": "获得增益", "actor": "Mymage" }
+        ],
+        "vulnerablePhases": [],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "kb-intent-02",
+      "title": "知识依赖：开场爆发压着打，为下一波易伤留资源",
+      "verdict": "intent",
+      "expectedKey": "hold-burst-next-vuln",
+      "kbFixtures": [
+        "本职业打法：首波小怪只交一轮爆发即可，第二波易伤机制前必须留好 Combustion。\n【意图:hold-burst-next-vuln】\n{\"kind\":\"hold-burst-next-vuln\",\"burstBefore\":60,\"vulnAfter\":90}\n【解释】{t} 的爆发在开场即交、未覆盖任何易伤，是「前快后留」的节奏规划，为下一波易伤保留资源。【/意图】"
+      ],
+      "combat": { "dungeon": "Grim Batol", "level": 12, "durationSec": 500, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 20, "spell": "Combustion", "note": "获得增益", "actor": "Mymage" }
+        ],
+        "vulnerablePhases": [{ "start": 150, "end": 180, "note": "Vulnerable" }],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "kb-intent-03",
+      "title": "知识依赖：按职业资源循环停手攒资源窗口",
+      "verdict": "intent",
+      "expectedKey": "quiet-resource-window",
+      "kbFixtures": [
+        "资源循环要点：爆发前 60 秒的「静默窗口」是标准打法——停止一切填充技能，只保持增益触发。\n【意图:quiet-resource-window】\n{\"kind\":\"quiet-resource-window\",\"windowStart\":60,\"windowEnd\":120,\"minBuffs\":1}\n【解释】{t} 起约 60 秒内无任何技能使用但保持增益获得，是爆发前的资源循环停手窗口，判断为有规划的操作。【/意图】"
+      ],
+      "combat": { "dungeon": "The Stonevault", "level": 10, "durationSec": 400, "playerName": "Mymage" },
+      "aggregate": {
+        "cooldowns": [
+          { "t": 80, "spell": "Heating Up", "note": "触发增益", "actor": "Mymage" },
+          { "t": 200, "spell": "Tempered Potion", "note": "使用药水", "actor": "Mymage" }
+        ],
+        "vulnerablePhases": [],
+        "deaths": [],
+        "interrupts": [],
+        "movement": []
+      }
+    },
+    {
+      "id": "kb-intent-04",
+      "title": "知识依赖：故意延后打断等怪聚齐再控链",
+      "verdict": "intent",
+      "expectedKey": "late-interrupt-by-design",
+      "kbFixtures": [
+        "控链规划：该职业的打断留到第二波聚怪期集中使用，前期不断控是刻意攒控链。\n【意图:late-interrupt-by-design】\n{\"kind\":\"late-interrupt-by-design\",\"noInterruptBefore\":120,\"minInterruptsAfter\":2}\n【解释】前期零打断并非漏断：{t} 起连续打断属于「等怪聚齐再控链」的规划。【/意图】"
+      ],
+      "combat": { "dungeon": "Ara-Kara, City of Echoes", "level": 8, "durationSec": 600, "playerName": "Roguex" },
+      "aggregate": {
+        "cooldowns": [],
+        "vulnerablePhases": [],
+        "deaths": [],
+        "interrupts": [
+          { "t": 150, "spell": "Web Bolt", "actor": "Roguex" },
+          { "t": 160, "spell": "Venom Volley", "actor": "Roguex" },
+          { "t": 165, "spell": "Web Bolt", "actor": "Roguex" }
+        ],
+        "movement": []
+      }
+    },
+    {
+      "id": "kb-intent-05",
+      "title": "知识依赖：转阶段前宠物提前就位规避落地伤害（T19 同款场景，知识解释版）",
+      "verdict": "intent",
+      "expectedKey": "pet-position-evade",
+      "kbFixtures": [
+        "兽王猎人高阶技巧：转阶段前 25 秒内指挥宠物移动到安全点，规避阶段落地伤害。\n【意图:pet-position-evade】\n{\"kind\":\"pet-preposition\",\"beforeLo\":2,\"beforeHi\":25,\"minMoves\":2}\n【解释】{t} 前后宠物连续位移至固定位置，是「提前指挥宠物规避转阶段伤害」的高阶技巧，判断为正确决策。【/意图】"
+      ],
+      "combat": { "dungeon": "Grim Batol", "level": 12, "durationSec": 500, "playerName": "Hunterbeast" },
+      "aggregate": {
+        "cooldowns": [],
+        "vulnerablePhases": [{ "start": 200, "end": 230, "note": "Phase Transition" }],
+        "deaths": [],
+        "interrupts": [],
+        "movement": [
+          { "t": 175, "spell": "Dash", "actor": "Beast" },
+          { "t": 179, "spell": "Follow", "actor": "Beast" },
+          { "t": 184, "spell": "Stay", "actor": "Beast" }
+        ]
+      }
+    },
+    {
+      "$comment": "T19 疑似高阶技巧案例：知识库解释不了但证据链完整 → 判「疑似」而非「失误」。",
+      "id": "suspected-01",
+      "title": "疑似高阶技巧：转阶段前宠物提前就位规避落地伤害",
+      "verdict": "suspected",
+      "expectedKey": "pet-preposition-before-phase",
+      "combat": { "dungeon": "Grim Batol", "level": 12, "durationSec": 500, "playerName": "Hunterbeast" },
+      "aggregate": {
+        "cooldowns": [],
+        "vulnerablePhases": [{ "start": 200, "end": 230, "note": "Phase Transition" }],
+        "deaths": [],
+        "interrupts": [],
+        "movement": [
+          { "t": 175, "spell": "Dash", "actor": "Beast" },
+          { "t": 179, "spell": "Follow", "actor": "Beast" },
+          { "t": 184, "spell": "Stay", "actor": "Beast" }
+        ]
+      }
     }
   ]
 }

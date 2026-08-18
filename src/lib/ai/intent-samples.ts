@@ -9,8 +9,10 @@ import path from "node:path";
 export interface Sample {
   id: string;
   title: string;
-  verdict: "intent" | "mistake";
+  verdict: "intent" | "mistake" | "suspected";
   expectedKey: string;
+  /** 领域知识依赖型案例：配套知识条目 fixture（评测"有检索"模式时注入） */
+  kbFixtures?: string[];
   combat: { dungeon: string; level: number; durationSec: number; playerName: string };
   aggregate: {
     cooldowns: { t: number; spell?: string; note?: string; actor?: string }[];
