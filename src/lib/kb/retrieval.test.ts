@@ -196,14 +196,17 @@ describe("检索注入与过滤（T16）", () => {
       }),
       resetKbStoreForTest: () => undefined,
     }));
-    const { retrieveKnowledge: rk } = await import("@/lib/kb/retrieval");
-    const kb = await rk({
-      playerClass: "Mage",
-      playerSpec: "Fire",
-      dungeon: "*",
-      chapterNo: 5,
-    });
-    expect(kb).toBeNull();
-    vi.unmock("@/lib/kb");
+    try {
+      const { retrieveKnowledge: rk } = await import("@/lib/kb/retrieval");
+      const kb = await rk({
+        playerClass: "Mage",
+        playerSpec: "Fire",
+        dungeon: "*",
+        chapterNo: 5,
+      });
+      expect(kb).toBeNull();
+    } finally {
+      vi.doUnmock("@/lib/kb");
+    }
   });
 });
