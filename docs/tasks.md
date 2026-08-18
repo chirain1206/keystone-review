@@ -26,11 +26,12 @@
 | T11 | 一键分享（FR-9）：shares 表 + 128-bit 随机 token、公开只读分享页 GET /s/:token、开启/关闭 | FR-9 验收标准逐条通过；token 不可枚举（随机性测试）；分享页无任何写操作接口 | T5 |
 | T12 | 前端界面整合：首页（粘贴链接/选文件）、战斗选择页、报告页（章节进度+渲染+问答框）、我的复盘页、登录页、分享页、隐私政策/用户协议/免责声明页；响应式适配 | 全部页面可用、首屏 ≤3s、移动端自适应；报告页章节进度与重试交互正确 | T3, T5, T7, T10, T11 |
 | T13 | 安全与合规加固：HTTPS、接口鉴权与数据隔离复核、上传数据结构校验（≤50K token 预算服务端再校验）、隐私政策/免责声明文案（"非暴雪官方产品，与暴雪娱乐无关"）、错误提示全覆盖 | 非功能需求（安全/隐私/合规）检查表逐项通过；未登录访问受保护接口一律 401 | T2, T3, T11 |
-| T14 | 知识库数据模型与检索（FR-11）：迁移 0003_kb_documents.sql（create extension vector + 表 kb_documents：chunk_text、embedding vector(1024)、meta jsonb(class/spec/dungeon/patch/type/source_url)、source_hash 唯一键）+ 余弦相似度检索函数 + Repo searchKb + FileRepo mock（关键词匹配） | 迁移可重复执行；单测：检索命中/空结果/按 meta 过滤（含按 patch 过滤）正确；kb 表服务端专用（无 RLS，不经 anon 暴露） | T2 |
-| T15 | 嵌入服务与入库管线（FR-11）：SiliconFlow bge-m3 适配器（env：EMBEDDING_API_KEY/BASE_URL/MODEL，OpenAI 兼容协议，1024 维；无密钥降级 mock 假向量）+ scripts/ingest-kb.mjs（读 kb/sources/*.md frontmatter → 切块 → 嵌入 → upsert，source_hash 幂等）+ kb/sources/ 初始骨架（≥1 专精 5 条样例） | 入库脚本可运行且幂等（重复执行不重复插入）；样例入库后可检索命中；mock 模式全链路可测 | T14 |
-| T16 | 分析时检索注入（FR-11 核心链路）：检索服务（query = 玩家 class/spec + 副本 + 章节/问答上下文 → 嵌入 → top-k≤5）→ 注入第 5 章与问答提示词（"【社区攻略参考】仅供参考，不代表本场数据"定界包裹 + 来源标注）；降级：未命中/无密钥/检索失败 → 仅 log 证据不报错 | 单测：注入格式正确、≤5 条、来源标注、降级不报错；**检索按活跃补丁过滤（env ACTIVE_PATCH，缺省取最新入库 patch；patch=general 始终可见），旧补丁内容不注入**；意图评测（intent-eval.test.ts）仍通过 | T14, T15 |
+| T14 | 知识库数据模型与检索（FR-11）：迁移 0003_kb_documents.sql（create extension vector + 表 kb_documents：chunk_text、embedding vector(1024)、meta jsonb(class/spec/dungeon/patch/type/source_url/**origin/status**)、source_hash 唯一键）+ 余弦相似度检索函数 + Repo searchKb + FileRepo mock（关键词匹配） | 迁移可重复执行；单测：检索命中/空结果/按 meta 过滤（含按 patch、**按 status=active** 过滤）正确；kb 表服务端专用（无 RLS，不经 anon 暴露） | T2 |
+| T15 | 嵌入服务与入库管线（FR-11）：SiliconFlow bge-m3 适配器（env：EMBEDDING_API_KEY/BASE_URL/MODEL，OpenAI 兼容协议，1024 维；无密钥降级 mock 假向量）+ scripts/ingest-kb.mjs（读源文件 frontmatter → 切块 → 嵌入 → upsert，source_hash 幂等）+ **两个源目录**：kb/sources/（curated→active）与 kb/inferred/（inferred→candidate），初始骨架各含样例 | 入库脚本可运行且幂等（重复执行不重复插入）；两目录互不覆盖；样例入库后可检索命中（候选样例仅 status=candidate）；mock 模式全链路可测 | T14 |
+| T16 | 分析时检索注入（FR-11 核心链路）：检索服务（query = 玩家 class/spec + 副本 + 章节/问答上下文 → 嵌入 → top-k≤5）→ 注入第 5 章与问答提示词（"【社区攻略参考】仅供参考，不代表本场数据"定界包裹 + 来源标注）；降级：未命中/无密钥/检索失败 → 仅 log 证据不报错 | 单测：注入格式正确、≤5 条、来源标注、降级不报错；**检索仅注入 status=active（候选条目绝不注入）**；检索按活跃补丁过滤（env ACTIVE_PATCH，缺省取最新入库 patch；patch=general 始终可见），旧补丁内容不注入；意图评测（intent-eval.test.ts）仍通过 | T14, T15 |
 | T17 | FR-11 评测样例扩展：intent-samples.json 增加 ≥5 个"领域知识依赖型意图"案例（赌 buff 聚怪、留爆发对齐下一波易伤、按职业资源循环停手等）+ 配套知识条目 fixture；评测支持有检索/无检索双模式 | 知识依赖型案例在注入知识时正确率 ≥80%；评测脚本输出两种模式对比 | T16 |
 | T18 | 初始知识库内容（第一批）：从 NGA 精华帖/Wowhead 整理 3 个当前赛季（至暗之夜 12.1，大秘境 S2）主流专精，每专精 ≥10 条（意图模式/爆发规划/资源管理要点），每条带 frontmatter（patch=12.1 + source_url 出处链接） | 条目格式合规、出处可打开验证；内容为要点摘要（非整篇搬运）；经主 Agent 审核入库 | T15 |
+| T19 | 疑似高阶技巧判定（FR-5 第三档，用户要求）：第 5 章提示词增加第三档结论"疑似高阶技巧"——知识库解释不了但证据链完整的异常操作（或对比顶尖玩家存在同类操作），输出"疑似技巧 + 证据 + 推断理由"，不武断判失误；发现同步落库为候选条目（origin=inferred、status=candidate，不注入正式分析）；mock 提供器同步实现该档位 | 单测：构造样例（如转阶段前宠物提前就位规避落地伤害）判为"疑似"而非"失误"；候选落库可查且不注入用户报告；意图评测（intent-eval.test.ts）仍通过 | T16 |
 
 ## 与 PRD 需求映射（开发完成后 QA 对照）
 
@@ -47,13 +48,15 @@
 | T11 | FR-9 |
 | T12/T13 | 非功能需求 + 全部 FR 的界面载体 |
 | T14–T18 | FR-11（社区知识库 RAG） |
+| T19 | FR-5 第三档（疑似高阶技巧）+ FR-11 候选沉淀 |
 
 ## 知识保鲜运维（非开发任务，阶段 7 运营执行）
 
 - 补丁触发更新（SLA ≤1 周）：调研员起草 → 主 Agent 审核 → `scripts/ingest-kb.mjs` 入库
 - 社区反哺通道：玩家反馈新手法/纠错 → 验证 → 入库（运营阶段搭建反馈渠道）
 - 活跃补丁切换：更新部署变量 ACTIVE_PATCH + 入库新内容（旧内容自动不再注入，保留可回滚）
-- 远期：顶尖玩家 log 数据挖掘，自动产出候选知识条目（第二版）
+- **候选技巧人工审查**：主 Agent 初审 + 内测期专家玩家（用户及其朋友）终审 → 转正（candidate→active）或弃用（deprecated）
+- 远期：顶尖玩家 log 批量聚类挖掘，自动产出候选知识条目（第二版）
 
 ## 阶段 5 才做的部署事项（本清单不包含）
 

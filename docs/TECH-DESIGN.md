@@ -68,13 +68,14 @@ Vercel（Next.js 服务端，免费档 60s/函数）
 ### 核心决策：社区打法知识库 RAG（ADR-002，用户拍板"一步到位"）
 
 - **背景**：战术意图分两类——"时间轴可推理型"（爆发药对齐易伤，log 内证据可判）与"领域知识依赖型"（如某职业怪聚齐前打资源/赌 buff 触发、聚齐后带最佳增益爆发——log 只记录动作，不记录原因）。后者必须依赖社区打法知识。用户拍板：一步到位做完整 RAG。
-- **决策**：建立"职业/专精打法知识库"（意图模式、爆发规划、资源管理、副本机制要点、补丁变动），分析时按"专精/副本/可疑操作"检索 top-k（k≤5）注入提示词。
+- **决策**：建立"职业/专精打法知识库"（意图模式、爆发规划、资源管理、副本机制要点、补丁变动），分析时按"专精/副本/可疑操作"检索 top-k（k≤5）注入提示词。知识条目带 **origin（curated/inferred/community）与 status（active/candidate/deprecated）** 标签，**分池治理**（用户要求：log 推断知识与攻略整理知识分目录存放、互不覆盖）；候选经人工审核转正。
+- **不盲信知识库（用户要求）**：攻略作者可能有意/无意省略细节（如主播私藏细节给付费粉丝）；分析时对"知识库解释不了但证据链完整的异常操作"不得武断判失误，输出"**疑似高阶技巧** + 证据 + 推断理由"（FR-5 第三档），沉淀为候选条目（inferred/candidate）待人工验证。例：BOSS 转阶段位移后落地有伤害，顶尖玩家提前控制宝宝就位（宝宝高额被动减伤）保证落地后第一时间输出——此类手法攻略不写、只能从 log 参透。
 - **内容与更新（知识保鲜闭环，非一次性注入）**：调研确认当前为《至暗之夜》补丁 12.1、大秘境第 2 赛季；来源优先级 **NGA 各职业精华帖 > Wowhead 中/英文指南 > B站（头部攻略 up）> Icy Veins > 17173/网易大神**。所有站点无公开 API、ToS 禁止爬取 → 全自动抓取不可行，保鲜靠三层机制：
   1. **补丁触发更新（主通道）**：补丁/热修上线 → 调研员按 patch notes + 社区差异起草 → 主 Agent 审核 → 入库，SLA ≤1 周；
   2. **社区反哺**（阶段 7 运营搭通道）：玩家反馈新手法/纠错 → 团队验证 → 入库；
-  3. **log 数据挖掘**（远期第二版）：从顶尖玩家 log 聚类"新兴打法模式"，自动产出候选知识条目。
+  3. **log 推断（疑似技巧发现，v1 即启用）**：分析发现"疑似高阶技巧" → 落库为候选（inferred/candidate）→ 人工审核（主 Agent 初审 + 内测专家玩家终审）转正或弃用；批量聚类挖掘（第二版）。
   **版本治理**：kb_documents.meta.patch 标记内容版本；检索默认只注入活跃补丁内容（部署变量 ACTIVE_PATCH），跨版本通用知识（如职业资源循环原理）标记 patch=general；旧内容保留不物理删除（可回滚）；ingest 脚本按 source_hash 幂等重建。**只存要点摘要与出处链接，不整篇搬运**（版权合规）。详细调研见 docs/rag-community-knowledge-feasibility.md。
-- **存储与检索**：Supabase pgvector（调研确认免费层支持；片段 = 文本 + meta（class/spec/dungeon/patch/type/source_url）+ bge-m3 嵌入（1024 维））；运行时只查自己的库（无 SSRF）；免费层 1 周不活跃暂停 → 部署阶段加保活 cron 或接受冷启动。
+- **存储与检索**：Supabase pgvector（调研确认免费层支持；片段 = 文本 + meta（class/spec/dungeon/patch/type/source_url/**origin/status**）+ bge-m3 嵌入（1024 维））；**检索仅返回 status=active**（候选绝不注入正式分析）；源文件分目录：kb/sources/（curated→active）与 kb/inferred/（inferred→candidate），互不覆盖；运行时只查自己的库（无 SSRF）；免费层 1 周不活跃暂停 → 部署阶段加保活 cron 或接受冷启动。
 - **嵌入**：SiliconFlow bge-m3（中文最佳、几乎免费；备选 Jina 免费档）；DeepSeek 无嵌入 API（已核实），必须外接。
 - **安全**：知识库内容为**外部不可信数据**——与用户 log 同样做数据/指令隔离，防提示词注入；注入片段带来源标注；入库前人工审核。
 - **降级**：知识库为空/未命中 → 仅 log 证据分析，不报错（FR-11）。
@@ -91,7 +92,7 @@ Vercel（Next.js 服务端，免费档 60s/函数）
 | report_chapters | report_id, chapter_no(1–6), title, content, status, tokens_in/out, cost | 章节独立存储 → 断点重试 |
 | conversations / messages | report_id, role, content, created_at | 问答记录（单场 ≤10 轮） |
 | shares | report_id, token(128-bit 随机), enabled, expires_at | 分享链接：防枚举、可撤销、只读 |
-| kb_documents | chunk_text, embedding vector, meta jsonb(class/spec/dungeon/patch/type/source_url) | FR-11 知识库片段（团队维护，非用户数据；pgvector 检索） |
+| kb_documents | chunk_text, embedding vector, meta jsonb(class/spec/dungeon/patch/type/source_url/origin/status) | FR-11 知识库片段（团队维护，非用户数据；pgvector 检索；仅 status=active 可注入） |
 
 ## 接口契约（API 清单）
 
