@@ -18,6 +18,9 @@ const REQUIRED_KEYS = [
   "NEXT_PUBLIC_TURNSTILE_SITE_KEY",
   "WCL_CLIENT_ID",
   "WCL_CLIENT_SECRET",
+  "EMBEDDING_API_KEY",
+  "EMBEDDING_BASE_URL",
+  "EMBEDDING_MODEL",
   "APP_URL",
 ];
 
@@ -60,12 +63,18 @@ describe("validateProductionEnv（M-2 生产 fail-fast）", () => {
     expect(missing).toContain("NEXT_PUBLIC_TURNSTILE_SITE_KEY");
     expect(missing).toContain("WCL_CLIENT_ID");
     expect(missing).toContain("WCL_CLIENT_SECRET");
+    expect(missing).toContain("EMBEDDING_API_KEY");
+    expect(missing).toContain("EMBEDDING_BASE_URL");
+    expect(missing).toContain("EMBEDDING_MODEL");
     expect(missing).toContain("APP_URL（必须以 https:// 开头）");
-    // 返回值只含键名/说明（精确 11 项），绝不携带任何密钥值
+    // 返回值只含键名/说明（精确 14 项），绝不携带任何密钥值
     expect([...missing].sort()).toEqual([
       "APP_URL（必须以 https:// 开头）",
       "DEEPSEEK_API_KEY",
       "EMAIL_FROM",
+      "EMBEDDING_API_KEY",
+      "EMBEDDING_BASE_URL",
+      "EMBEDDING_MODEL",
       "NEXT_PUBLIC_SUPABASE_ANON_KEY",
       "NEXT_PUBLIC_SUPABASE_URL",
       "NEXT_PUBLIC_TURNSTILE_SITE_KEY",

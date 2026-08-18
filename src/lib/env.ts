@@ -37,6 +37,17 @@ export const envConfig = {
   turnstileSiteKey: env("NEXT_PUBLIC_TURNSTILE_SITE_KEY"),
   turnstileSecretKey: env("TURNSTILE_SECRET_KEY"),
 
+  // FR-11 知识库：嵌入服务（SiliconFlow bge-m3，OpenAI 兼容协议，1024 维）
+  embeddingApiKey: env("EMBEDDING_API_KEY"),
+  embeddingBaseUrl: env("EMBEDDING_BASE_URL") || "https://api.siliconflow.cn",
+  embeddingModel: env("EMBEDDING_MODEL") || "BAAI/bge-m3",
+  get embeddingEnabled(): boolean {
+    return Boolean(this.embeddingApiKey);
+  },
+
+  // FR-11 知识库：活跃补丁（缺省由库内最新非 general 补丁兜底）
+  activePatch: env("ACTIVE_PATCH"),
+
   devLogCodes: env("DEV_LOG_CODES") === "true",
 } as const;
 
@@ -63,6 +74,9 @@ const PRODUCTION_REQUIRED_ENV: { key: string; label: string }[] = [
   { key: "NEXT_PUBLIC_TURNSTILE_SITE_KEY", label: "NEXT_PUBLIC_TURNSTILE_SITE_KEY" },
   { key: "WCL_CLIENT_ID", label: "WCL_CLIENT_ID" },
   { key: "WCL_CLIENT_SECRET", label: "WCL_CLIENT_SECRET" },
+  { key: "EMBEDDING_API_KEY", label: "EMBEDDING_API_KEY" },
+  { key: "EMBEDDING_BASE_URL", label: "EMBEDDING_BASE_URL" },
+  { key: "EMBEDDING_MODEL", label: "EMBEDDING_MODEL" },
 ];
 
 /**
