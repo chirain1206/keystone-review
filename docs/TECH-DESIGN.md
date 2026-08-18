@@ -1,0 +1,126 @@
+# 技术设计：WoW M+ AI 复盘教练（暂名）
+
+> 阶段 3（技术设计）产出 · 版本 v1.0 · 依据 docs/PRD.md
+> 所有技术决策由主 Agent 做出并已通过架构评审子 Agent 交叉审查。
+
+## 方案概述（大白话）
+
+一个网页应用：用户打开网页 → 粘贴 Warcraft Logs 链接、或在浏览器里选择自己的战斗日志文件（文件在**本地解析**，原始文件不上传）→ 系统把日志整理成精简数据 → AI（DeepSeek）生成 6 章复盘报告（**6 章并行生成**，边生成边显示）→ 用户可在报告页继续提问。
+
+整件事用一套技术做完（前后端一体），部署在免费云平台上，基础设施费用 0 元，唯一的花销是 AI 调用费（估算每月 15–30 美元，按 1000 次复盘/月）。
+
+## 架构评审记录（子 Agent 交叉审查）
+
+评审结论：方案可行，提出 8 处调整，**全部采纳**：
+
+| # | 评审意见 | 采纳情况 |
+| --- | --- | --- |
+| 1 | FR-10"缩减≥90%"验收不充分，改用 token 预算（≤50K token） | ✅ 已改 PRD FR-10 |
+| 2 | 200MB 原始文件不应上传，改为浏览器 Web Worker 本地解析，只传结构化 JSON | ✅ 已改 PRD FR-2 与本文档 |
+| 3 | 逐章生成重复发上下文会超支（~$90/月），需开上下文缓存 + 每章只发相关片段 | ✅ 见"成本模型" |
+| 4 | Vercel 60s 上限 + vercel.app 国内不可直连：需输出封顶 + 自定义域名 + 兜底方案 | ✅ 见"风险与对策" |
+| 5 | WCL API 拉全量事件最耗配额最脆弱：文件上传为主数据源，WCL 只做轻量查询 | ✅ 见"数据获取" |
+| 6 | Supabase 免费档邮件有频率限制：接 Resend 免费档 SMTP | ✅ 见"技术选型" |
+| 7 | 分享链接需 128-bit 随机 token 防枚举、可撤销 | ✅ 见"数据模型" |
+| 8 | 缺降级与防滥用：指数退避重试 + 历史缓存 + Turnstile 防刷 | ✅ 见"风险与对策" |
+
+## 技术选型（选什么 / 为什么 / 放弃什么）
+
+| 选型 | 选择 | 为什么 | 放弃的选项 |
+| --- | --- | --- | --- |
+| 框架 | **Next.js（App Router）+ TypeScript**，前后端一体 | 一个仓库、一次部署、一种语言；AI 辅助开发最熟悉；Vercel 一键部署 | 静态前端+独立后端（多一套部署运维，违背 KISS）；SvelteKit（AI 熟悉度低） |
+| 部署 | **Vercel Hobby（免费档）**，fluid compute，函数 maxDuration=60s | 免费；流式响应可跑满时长；与 Next.js 原生契合 | Render 免费档（15 分钟休眠冷启动，对 p95 指标致命）；纯 Cloudflare Workers（CPU 计费模型不适合解析类代码，但作为流式接口兜底） |
+| 数据/账号 | **Supabase 免费层**：Postgres + Auth（passwordless 邮箱验证码 OTP，天然满足"无密码"）+ Storage（几乎不用，原始文件不上传） | 免费额度充足（DB 500MB、MAU 50k）；OTP 现成；RLS 行级安全天然实现"用户 A 看不到用户 B" | 自建后端鉴权（工作量大）；Firebase（国内访问差） |
+| 邮件 | **Resend 免费档 SMTP**（3000 封/月） | Supabase 内置邮件限流（约 2 封/小时/用户）且易进垃圾箱；Resend 免费档够用 | 自建邮件服务（过度设计） |
+| AI | **DeepSeek deepseek-chat，流式输出，开启上下文缓存** | 流式支持、128K 上下文、价格极低（输入 $0.28/M，缓存命中 $0.028/M，输出 $0.42/M）；缓存命中价是未命中的 1/10 | GPT/Claude（贵 5–10 倍）；本地模型（个人开发者不可运维） |
+| 日志解析 | **自研 TypeScript 解析器**（浏览器 Web Worker 内分块解析 WoWCombatLog.txt，格式为公开规范 COMBAT_LOG_EVENT） | 避开许可证风险；只解析需要的子集，简单可控 | WoWAnalyzer 解析器（**AGPL-3.0 传染性协议，服务端引用有开源义务风险**）；npm wow-combat-log-parser（活跃度低、许可证未确认） |
+| WCL 数据 | **WCL v2 GraphQL API**（免费注册 client；cn 与 www 同一套 API） | 官方途径，合规 | 爬取网页（脆、合规风险） |
+| 防滥用 | **Cloudflare Turnstile**（免费人机验证） | 免费、体验好 | 付费验证码服务 |
+
+## 系统架构
+
+```
+浏览器（用户）
+ ├─ 页面：首页上传 / 战斗选择 / 报告页(章节+问答) / 我的复盘 / 分享页
+ ├─ Web Worker：本地解析 log 文件 → 结构化 JSON（FR-10）
+ └─ 直连 Supabase Auth（登录态）+ 调 Vercel API（流式 SSE）
+
+Vercel（Next.js 服务端，免费档 60s/函数）
+ ├─ API：报告创建 / 章节生成(流式) / 问答(流式) / 历史 / 分享
+ ├─ 调用：DeepSeek API（流式）、WCL v2 API（轻量）、Turnstile 验证
+ └─ 数据：Supabase Postgres（RLS 隔离）
+
+外部服务
+ ├─ DeepSeek：deepseek-chat 流式（报告生成、问答）
+ ├─ WCL v2 API：报告元数据 + 对比基准（失败可降级）
+ └─ Resend：验证码邮件
+```
+
+### 核心决策：报告 6 章并行生成（ADR-001）
+
+- **决策**：6 章报告由服务端**并行**发起 6 个 DeepSeek 流式调用，汇成一条 SSE 流返回浏览器；每章独立存储、独立断点重试。
+- **理由**：单章输出约 1800 token ≈ 40–60 秒（正好顶在 Vercel 60s 上限边缘）；若 6 章串行总时长 4–6 分钟，违反 PRD"报告 p95 ≤120s"。并行后总时长 ≈ 最慢一章 ≈ 60s。
+- **成本**：每章只发该章相关的数据片段（不是全量 50K），共享前缀命中 DeepSeek 上下文缓存，单次复盘总成本约 $0.02–0.03。
+- **放弃项**：串行逐章（超时）；单次生成整份报告（输出 6–12K token，100–200s，顶破 60s）。
+
+## 数据模型（Supabase Postgres，全部 RLS 按 user_id 隔离）
+
+| 表 | 关键字段 | 说明 |
+| --- | --- | --- |
+| profiles | id, email, timezone, created_at | 用户档案（时区用于"每天 3 次"计数） |
+| reports | id, user_id, source_type(file/link), dungeon, level, spec, result, status, compare_meta jsonb, created_at | 一次复盘 = 一条 report |
+| processed_logs | report_id(唯一), events jsonb, summary jsonb, raw_size, token_estimate | FR-10 预处理后的结构化数据（原始文件永不入库） |
+| report_chapters | report_id, chapter_no(1–6), title, content, status, tokens_in/out, cost | 章节独立存储 → 断点重试 |
+| conversations / messages | report_id, role, content, created_at | 问答记录（单场 ≤10 轮） |
+| shares | report_id, token(128-bit 随机), enabled, expires_at | 分享链接：防枚举、可撤销、只读 |
+
+## 接口契约（API 清单）
+
+| 接口 | 说明 |
+| --- | --- |
+| POST /api/reports（JSON） | 接收浏览器解析好的结构化数据（服务端校验 ≤50K token 预算）→ 建 report |
+| POST /api/reports/from-link | 粘贴 WCL 链接 → 拉元数据（副本/层数/角色专精）+ 可选对比基准；事件拉取失败/配额不足 → 降级提示改用文件 |
+| POST /api/reports/:id/generate（SSE 流式） | 并行生成 6 章，逐章回传进度；已生成章节跳过（幂等） |
+| POST /api/reports/:id/chapters/:n（SSE 流式） | 单章重试接口（某章失败只重跑该章） |
+| POST /api/reports/:id/qa（SSE 流式） | 问答：上下文 = 结构化事件切片 + 前几轮；≤10 轮；违规问题礼貌拒绝 |
+| GET /api/reports、GET /api/reports/:id、DELETE /api/reports/:id | 历史列表 / 详情 / 删除（级联删分享与问答） |
+| POST/DELETE /api/reports/:id/share | 开启/关闭分享 |
+| GET /s/:token（页面） | 公开分享页：免登录只读，无任何写操作 |
+
+## 失败场景与对策
+
+| 场景 | 对策 |
+| --- | --- |
+| 某章生成超时/失败 | 章节独立状态，客户端显示"第 N 章失败，点击重试"，只重跑该章 |
+| DeepSeek 限流/不可用 | 指数退避重试 ×3 → 标记失败提示稍后重试；**历史报告可正常查看（本地缓存）**，不做多模型切换（KISS） |
+| 用户生成中途关页面 | 章节已存库，重开报告页即可续看/续跑 |
+| WCL API 配额耗尽/失败 | 降级：提示"请改用文件上传"或"本场不含对比章节"，不阻塞复盘 |
+| 恶意刷接口 | Turnstile 人机验证 + 每账号每日 3 次 + IP/邮箱频控 |
+| 分享链接被猜/泄露 | 128-bit 随机 token 不可枚举；用户随时关闭 |
+
+## 成本模型（月，按 1000 次复盘估算）
+
+| 项 | 成本 |
+| --- | --- |
+| Vercel Hobby + Supabase 免费层 + Cloudflare 免费 + Resend 免费档 | $0 |
+| DeepSeek（每场 6 章约 $0.02–0.03，含缓存命中） | $20–30 |
+| 问答（假设场均 3 轮） | 含在上项量级内 |
+| **合计** | **约 $20–30/月** |
+
+## 风险与对策
+
+| 风险 | 对策 |
+| --- | --- |
+| Vercel 60s 上限余量薄（单章 40–60s） | 每章输出封顶 1800 token + QA 阶段压测；若实测超时，把流式接口单独搬到 Cloudflare Worker（无 wall-clock 上限），其余架构不动 |
+| vercel.app 域名国内间歇不可直连 | 绑定自定义域名 + Cloudflare 加速（阶段 5 处理）；文档说明国服访问注意事项 |
+| DeepSeek 价格/模型变动 | 模型名走配置项，随时可换；成本面板监控（阶段 5） |
+| WCL API 配额/条款不确定 | 只做轻量查询；文件上传为主数据源；申请 client 时确认配额 |
+| AGPL 传染 | 解析器完全自研，仅参考公开格式规范 |
+| Supabase 免费层配额（DB 500MB） | 只存结构化数据（原始文件不落库）；超限后升级付费档（$25/月）也在预算内 |
+| 战术意图识别准确率不达标 | 样例集（≥10 案例）在 QA 阶段实测，通过率 ≥80% 才放行（FR-5） |
+
+## 部署形态（阶段 5 执行）
+
+- 代码仓库：GitHub 公开（含 README/LICENSE/CHANGELOG）
+- 部署：Vercel（关联 GitHub 自动部署）+ Supabase 项目 + DeepSeek/Resend/WCL 密钥（环境变量）
+- 域名与国服访问优化在阶段 5（发布准备）处理
