@@ -30,6 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# QA 调试产物（根目录合成样例证据文件，如 .data-qa-*.json/.txt）
+.data-*
+
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
