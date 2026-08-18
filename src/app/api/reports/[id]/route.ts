@@ -36,3 +36,24 @@ export async function GET(
     share: shares.length > 0 ? { enabled: shares[0].enabled, token: shares[0].token } : null,
   });
 }
+
+/**
+ * DELETE /api/reports/:id —— 删除复盘（FR-8）。
+ * 级联删除章节/问答/分享（repo 层保证），他人分享链接同时失效。
+ */
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const res = NextResponse.json<{ ok: boolean }>({ ok: false });
+  const user = await getCurrentUser(req, res);
+  if (!user) {
+    return NextResponse.json({ ok: false, error: "请先登录" }, { status: 401 });
+  }
+  const deleted = await getRepo().deleteReport(user.id, id);
+  if (!deleted) {
+    return NextResponse.json({ ok: false, error: "复盘不存在" }, { status: 404 });
+  }
+  return NextResponse.json({ ok: true });
+}

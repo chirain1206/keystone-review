@@ -8,6 +8,19 @@ import { enforceCreateLimits } from "@/lib/quota/enforce";
 
 export const maxDuration = 30;
 
+/**
+ * GET /api/reports —— 历史复盘列表（FR-8，按时间倒序）。
+ */
+export async function GET(req: NextRequest) {
+  const res = NextResponse.json<{ ok: boolean }>({ ok: false });
+  const user = await getCurrentUser(req, res);
+  if (!user) {
+    return NextResponse.json({ ok: false, error: "请先登录" }, { status: 401 });
+  }
+  const reports = await getRepo().listReportsByUser(user.id);
+  return NextResponse.json({ ok: true, reports });
+}
+
 const bodySchema = z.object({
   log: z.unknown(), // ProcessedLog（服务端 zod 校验）
   rawSize: z.number().int().min(0).default(0),
