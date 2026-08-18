@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { notFound } from "next/navigation";
 import ReportContent from "@/components/ReportContent";
 import { getPublicShareData } from "@/lib/share/service";
 
@@ -17,18 +17,9 @@ export default async function SharePage({
   const { token } = await params;
   const data = await getPublicShareData(token);
 
+  // D1：无效/关闭/过期的 token 返回真 404（友好文案见本段 not-found.tsx）
   if (!data) {
-    return (
-      <main>
-        <div className="card">
-          <h1>分享链接无效</h1>
-          <p>该链接不存在、已被关闭或已过期。请向分享者索取新的链接。</p>
-          <p>
-            <Link href="/">返回首页</Link>
-          </p>
-        </div>
-      </main>
-    );
+    notFound();
   }
 
   const doneChapters = data.chapters.filter((c) => c.status === "done" && c.content);
