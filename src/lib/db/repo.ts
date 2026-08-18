@@ -69,6 +69,10 @@ export interface Repo {
   listMessagesByReportId(reportId: string, conversationId?: string): Promise<Message[]>;
   countUserMessages(conversationId: string): Promise<number>;
 
+  // ---- 每日额度计数（M-3 原子化）----
+  /** 原子递增某用户某自然日已用次数，返回递增后的 count（生产走 DB RPC，开发走单进程计数）。 */
+  incrementDailyUsage(userId: string, day: string): Promise<number>;
+
   // ---- shares ----
   createShare(s: {
     reportId: string;

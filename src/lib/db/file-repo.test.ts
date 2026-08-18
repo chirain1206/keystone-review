@@ -179,3 +179,15 @@ describe("FileRepo 数据隔离与级联（T2）", () => {
     expect((await repo.getProfile("u2"))?.email).toBe("b@x.com");
   });
 });
+
+describe("每日额度原子计数（M-3）", () => {
+  it("并发 10 次 increment 结果 1..10 无重复（单进程原子）", async () => {
+    const repo = new FileRepo();
+    const day = "2026-08-19";
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => repo.incrementDailyUsage("user-concurrent", day)),
+    );
+    results.sort((a, b) => a - b);
+    expect(results).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+});

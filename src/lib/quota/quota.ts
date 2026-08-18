@@ -54,17 +54,18 @@ export interface QuotaCheck {
   resetAt: number;
 }
 
-/** 检查当日额度（按用户时区自然日统计 report 创建数）。 */
+/** 检查当日额度（按用户时区自然日统计）。 */
 export async function checkDailyQuota(
   userId: string,
   timeZone: string,
   nowMs: number = Date.now(),
 ): Promise<QuotaCheck> {
   const today = dayKey(nowMs, timeZone);
-  const reports = await getRepo().listReportsByUser(userId);
-  const used = reports.filter((r) => dayKey(r.createdAt, timeZone) === today).length;
+  // M-3：原子计数（先增后查，无 TOCTOU）——由 daily_usage 唯一键 + RPC/单进程
+  // 原子递增保证并发请求无法绕过每日上限。
+  const used = await getRepo().incrementDailyUsage(userId, today);
   return {
-    allowed: used < DAILY_REPORT_LIMIT,
+    allowed: used <= DAILY_REPORT_LIMIT,
     used,
     limit: DAILY_REPORT_LIMIT,
     resetAt: nextDayBoundaryMs(nowMs, timeZone),

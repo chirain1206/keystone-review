@@ -38,7 +38,8 @@ type CollectionName =
   | "chapters"
   | "conversations"
   | "messages"
-  | "shares";
+  | "shares"
+  | "daily_usage";
 
 /** 进程内写互斥：串行化所有落盘操作。 */
 let tail: Promise<unknown> = Promise.resolve();
@@ -337,6 +338,19 @@ export class FileRepo implements Repo {
     return Object.values(messages).filter(
       (m) => m.conversationId === conversationId && m.role === "user",
     ).length;
+  }
+
+  // ---- 每日额度计数（M-3）----
+  // 仅开发/测试用：单进程内计数器（经 withLock 串行化读-改-写，保证本进程原子）。
+  // 生产环境由 Supabase RPC increment_daily_usage 原子递增（见 supabase-repo.ts）。
+  async incrementDailyUsage(userId: string, day: string): Promise<number> {
+    const key = `${userId}:${day}`;
+    let count = 0;
+    await mutate<number>("daily_usage", (rows) => {
+      count = (rows[key] ?? 0) + 1;
+      rows[key] = count;
+    });
+    return count;
   }
 
   // ---- shares ----

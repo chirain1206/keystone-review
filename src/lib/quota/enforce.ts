@@ -1,7 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { checkRateLimit } from "@/lib/auth/guard";
 import { getRepo } from "@/lib/db";
-import { checkDailyQuota, QUOTA_EXHAUSTED_MESSAGE } from "@/lib/quota/quota";
+import { getClientIp } from "@/lib/net/client-ip";
+import {
+  checkDailyQuota,
+  DAILY_REPORT_LIMIT,
+  QUOTA_EXHAUSTED_MESSAGE,
+} from "@/lib/quota/quota";
 import { verifyTurnstile } from "@/lib/turnstile/adapter";
 
 /**
@@ -13,7 +18,7 @@ export async function enforceCreateLimits(
   userId: string,
   turnstileToken?: string,
 ): Promise<NextResponse | null> {
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ip = getClientIp(req);
 
   // 1) Turnstile（配置密钥时强制；mock 模式放行）
   const tv = await verifyTurnstile(turnstileToken, ip);
@@ -40,7 +45,12 @@ export async function enforceCreateLimits(
       {
         ok: false,
         error: QUOTA_EXHAUSTED_MESSAGE,
-        quota: { used: quota.used, limit: quota.limit, resetAt: quota.resetAt },
+        quota: {
+          // 展示口径封顶为 limit（避免暴露超量后的真实计数）
+          used: Math.min(quota.used, DAILY_REPORT_LIMIT),
+          limit: quota.limit,
+          resetAt: quota.resetAt,
+        },
       },
       { status: 429 },
     );

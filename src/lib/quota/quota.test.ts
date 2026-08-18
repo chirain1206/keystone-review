@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { getRepo, resetRepoForTest } from "@/lib/db";
+import { resetRepoForTest } from "@/lib/db";
 import {
   checkDailyQuota,
   DAILY_REPORT_LIMIT,
@@ -13,10 +13,10 @@ import {
 import { verifyTurnstile } from "@/lib/turnstile/adapter";
 
 /**
- * T9 验收（FR-7 额度部分）：
+ * T9 验收（FR-7 额度部分）+ M-3 原子化：
  *  - 每账号每日 3 次、按用户时区自然日
- *  - 第 4 次被拒且提示准确
- *  - 换时区边界正确
+ *  - 原子计数（先增后查）：前 3 次放行、第 4 次拒绝且提示准确
+ *  - 换时区边界正确、跨日恢复
  *  - 人机验证（mock 模式放行；真实密钥在部署阶段配置后强制）
  */
 
@@ -29,7 +29,6 @@ afterAll(async () => {
   resetRepoForTest();
   delete process.env.DATA_DIR;
   await fs.rm(dir, { recursive: true, force: true });
-  vi.useRealTimers();
 });
 beforeEach(() => resetRepoForTest());
 
@@ -52,76 +51,41 @@ describe("时区自然日（dayKey / nextDayBoundaryMs）", () => {
   });
 });
 
-describe("每日额度（每账号每日 3 次）", () => {
-  it("当日已用 3 次后第 4 次被拒，提示文案精确", async () => {
-    vi.setSystemTime(FIXED_NOW);
-    const repo = getRepo();
-    for (let i = 0; i < DAILY_REPORT_LIMIT; i++) {
-      await repo.createReport({
-        userId: "user-a",
-        sourceType: "file",
-        dungeon: "Grim Batol",
-        level: 10,
-        spec: "Fire",
-        playerName: "Mymage",
-        playerClass: "Mage",
-        result: true,
-      });
+describe("每日额度（每账号每日 3 次，原子计数）", () => {
+  it("前 3 次放行、第 4 次拒绝，提示文案精确", async () => {
+    for (let i = 1; i <= DAILY_REPORT_LIMIT; i++) {
+      const quota = await checkDailyQuota("user-a", "Asia/Shanghai", FIXED_NOW);
+      expect(quota.allowed).toBe(true);
+      expect(quota.used).toBe(i);
     }
-    const quota = await checkDailyQuota("user-a", "Asia/Shanghai", FIXED_NOW);
-    expect(quota.allowed).toBe(false);
-    expect(quota.used).toBe(DAILY_REPORT_LIMIT);
+    const exhausted = await checkDailyQuota("user-a", "Asia/Shanghai", FIXED_NOW);
+    expect(exhausted.allowed).toBe(false);
+    expect(exhausted.used).toBe(DAILY_REPORT_LIMIT + 1);
     expect(QUOTA_EXHAUSTED_MESSAGE).toContain("今日次数已用完");
     expect(QUOTA_EXHAUSTED_MESSAGE).toContain("深度复盘即将上线");
   });
 
-  it("时区边界计数：同一时刻创建的 3 份报告在 UTC 与上海时区均记为当天 3 次", async () => {
-    vi.setSystemTime(FIXED_NOW);
-    const repo = getRepo();
-    for (let i = 0; i < 3; i++) {
-      await repo.createReport({
-        userId: "user-c",
-        sourceType: "file",
-        dungeon: "Grim Batol",
-        level: 10,
-        spec: "Fire",
-        playerName: "Mymage",
-        playerClass: "Mage",
-        result: true,
-      });
-    }
-    // 用 UTC 视角统计：FIXED_NOW 是 08-18，创建时间也是 08-18（同一天）→ 3 次用尽
-    const utcQuota = await checkDailyQuota("user-c", "UTC", FIXED_NOW);
-    expect(utcQuota.used).toBe(3);
-    expect(utcQuota.allowed).toBe(false);
-    // 上海视角：FIXED_NOW 已是 08-19，报告创建于 08-19 凌晨 → 同样 3 次
-    const shQuota = await checkDailyQuota("user-c", "Asia/Shanghai", FIXED_NOW);
-    expect(shQuota.used).toBe(3);
-    expect(shQuota.allowed).toBe(false);
+  it("时区自然日互不串扰：同一用户在不同时区各自计数", async () => {
+    // FIXED_NOW 在 UTC 是 08-18、在上海是 08-19 → 不同 day key
+    const sh = await checkDailyQuota("user-c", "Asia/Shanghai", FIXED_NOW);
+    expect(sh.used).toBe(1);
+    const utc = await checkDailyQuota("user-c", "UTC", FIXED_NOW);
+    expect(utc.used).toBe(1);
+    expect(sh.resetAt).toBeGreaterThan(FIXED_NOW);
   });
 
-  it("跨日后额度恢复", async () => {
-    vi.setSystemTime(FIXED_NOW);
-    const repo = getRepo();
-    for (let i = 0; i < 3; i++) {
-      await repo.createReport({
-        userId: "user-d",
-        sourceType: "file",
-        dungeon: "Grim Batol",
-        level: 10,
-        spec: "Fire",
-        playerName: "Mymage",
-        playerClass: "Mage",
-        result: true,
-      });
+  it("跨日后额度恢复（新 day key 重新计数）", async () => {
+    for (let i = 0; i < DAILY_REPORT_LIMIT; i++) {
+      await checkDailyQuota("user-d", "Asia/Shanghai", FIXED_NOW);
     }
-    // 上海时区：FIXED_NOW 是 08-19，报告也在 08-19 → 用尽
-    expect((await checkDailyQuota("user-d", "Asia/Shanghai", FIXED_NOW)).allowed).toBe(false);
+    const exhausted = await checkDailyQuota("user-d", "Asia/Shanghai", FIXED_NOW);
+    expect(exhausted.allowed).toBe(false);
+
     // 第二天（上海 08-20 12:00 = UTC 08-20 04:00）
     const nextDay = Date.UTC(2026, 7, 20, 4, 0, 0);
     const quota = await checkDailyQuota("user-d", "Asia/Shanghai", nextDay);
     expect(quota.allowed).toBe(true);
-    expect(quota.used).toBe(0);
+    expect(quota.used).toBe(1);
   });
 });
 

@@ -10,6 +10,8 @@ import { kvDelete, kvGet, kvSet } from "@/lib/auth/kv-file";
  *
  * 两个层次：
  *  1. 发送频控（内存滑动窗口）：同一邮箱/同一 IP 单位时间内限发；
+ *     **仅单实例有效**（进程内存 Map，多实例/冷启动各自独立计数），
+ *     每日额度原子计数（quota.ts + daily_usage）为最终防线。
  *     mock 模式单进程有效；生产环境 Supabase Auth 自身也有发送限流
  *     （阶段 5 可再加 Upstash 等分布式频控，架构不变）。
  *  2. 验证失败锁定（持久化，跨请求/重启有效）：错 5 次锁定该邮箱 10 分钟。

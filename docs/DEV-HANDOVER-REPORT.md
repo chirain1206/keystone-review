@@ -15,7 +15,7 @@ FR-5 意图识别样例集评测 16/16（100%，QA 阈值 ≥80%）、上传解�
 | 任务 | 完成内容 | 验证方式 |
 | --- | --- | --- |
 | T1 | Next.js 16 App Router + TS 仓库、git、`.env.example`/`.env.local` 隔离、`GET /api/health` | build ✓；`/api/health` 实测返回 `{"ok":true}` 及各服务 mock/real 模式；**Vercel 部署为阶段 5 事项（无账号）** |
-| T2 | 7 表 SQL 迁移（可重复执行：if not exists / drop policy if exists）+ RLS 按 user_id 隔离 + FK 级联 + profile 触发器；Repo 接口双实现（Supabase / 本地文件） | `file-repo.test.ts`：A/B 用户隔离、级联删除、章节 upsert 幂等（4 用例）；**RLS 策略真实执行需部署阶段在 Supabase 上验证** |
+| T2 | 7 表 SQL 迁移（可重复执行：if not exists / drop policy if exists）+ RLS（仅对 anon 客户端直连路径生效）+ 应用层 user_id 过滤隔离 + FK 级联 + profile 触发器；Repo 接口双实现（Supabase / 本地文件） | `file-repo.test.ts`：A/B 用户隔离、级联删除、章节 upsert 幂等（4 用例）；**RLS 策略真实执行需部署阶段在 Supabase 上验证** |
 | T3 | Supabase passwordless OTP（生产路径）+ Resend REST 适配器 + mock 认证；登录/登出/me 接口；错 5 次锁 10 分钟；邮箱/IP 频控 | `auth.test.ts` 10 用例（锁定、TTL、频控、会话生命周期）；HTTP 实测：发码→验证→会话→登出后 401 |
 | T4 | 自研 COMBAT_LOG_EVENT 解析器（纯函数）+ Web Worker 分块解析 + FR-10 白名单降噪（打断/死亡/爆发/易伤全保留，普通施放与伤害按分钟聚合） | `parser.test.ts` 11 用例：5 个合成样例（含 1.2MB 噪声文件）——战斗列表正确、**token ≤50K 且缩减 ≥90%**、时间戳一致、噪声不入结构化数据、团本/无效文件明确报错 |
 | T5 | 6 章并行流式 SSE（章节独立存储、幂等跳过、单章重试接口、1800 token 输出封顶、章节级切片 + 共享前缀命中 DeepSeek 上下文缓存、tokens/cost 落库） | `generate.test.ts` 7 用例（幂等、单章重试、输出封顶、切片预算）；HTTP 实测 SSE：6 章并行生成、`done` 事件、章节 tokensIn/Out/cost 可见 |
@@ -31,7 +31,7 @@ FR-5 意图识别样例集评测 16/16（100%，QA 阈值 ≥80%）、上传解�
 ## 三、运行方式（原窗口 QA 自测）
 
 ```bash
-cd D:\Workspace\wow-analyzer
+cd <项目目录>
 npm install
 npm run dev          # 或 npm run build && npm start（本机用 PORT=3100，避免与现有 3080 冲突）
 ```
@@ -47,6 +47,8 @@ npm run dev          # 或 npm run build && npm start（本机用 PORT=3100，�
    `NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY`，
    数据层与账号体系自动切换为真实实现（db/index.ts、auth/provider.ts 工厂，业务代码零改动）。
    RLS 策略已写好但**未在真实 Supabase 上执行验证**（本机无 supabase CLI/docker）。
+   注意：服务端经 service role 连接（RLS 对服务端路径不生效），数据隔离由应用层显式
+   user_id 过滤保证；RLS 仅对 anon 客户端直连路径生效。
 2. **Resend**：配置 `RESEND_API_KEY + EMAIL_FROM` 即真实发验证码；同时把 Supabase Auth
    SMTP 指到 Resend（TECH-DESIGN 方案）。
 3. **DeepSeek**：配置 `DEEPSEEK_API_KEY`（可选 `DEEPSEEK_BASE_URL/DEEPSEEK_MODEL`）即真实
@@ -60,3 +62,5 @@ npm run dev          # 或 npm run build && npm start（本机用 PORT=3100，�
    ≥3 个真实 log（含噪声、200MB 级）复跑 FR-2/FR-10 验收（token ≤50K、缩减 ≥90%、时间戳一致）。
 8. 已知取舍：WCL 链接源只有元数据（无事件级时间线，AI 会按"数据不足"回答）——按 TECH-DESIGN
    "WCL 只做轻量查询、文件上传为主数据源"；mock 数据层为本地 JSON 文件（生产自动切 Supabase）。
+9. 已知取舍：邮箱/IP 频控为进程内存（**仅单实例有效**），每日额度已原子化计数
+   （daily_usage 唯一键 + RPC 原子递增）作为最终防线。
