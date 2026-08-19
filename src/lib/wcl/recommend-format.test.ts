@@ -31,11 +31,11 @@ describe("formatKeyPercent / formatPerformance", () => {
     expect(formatKeyPercent(0.5)).toBe("Key % 1"); // 四舍五入
   });
 
-  it("表现拼接：Key % 优先，Parse %/DPS 为次，全无 → 「—」", () => {
-    expect(formatPerformance(88, 96, 12_345, "dps")).toBe("Key % 88 · Parse % 96 · DPS 12.3k");
-    expect(formatPerformance(88, null, 12_345, "dps")).toBe("Key % 88 · DPS 12.3k");
-    expect(formatPerformance(null, null, 12_345, "dps")).toBe("DPS 12.3k");
-    expect(formatPerformance(null, null, null, "dps")).toBe("—");
+  it("表现拼接：Key % 优先，DPS 为次，全无 → 「—」", () => {
+    expect(formatPerformance(88, 12_345, "dps")).toBe("Key % 88 · DPS 12.3k");
+    expect(formatPerformance(88, null, "dps")).toBe("Key % 88");
+    expect(formatPerformance(null, 12_345, "dps")).toBe("DPS 12.3k");
+    expect(formatPerformance(null, null, "dps")).toBe("—");
   });
 
   it("DPS 缩写", () => {
@@ -78,24 +78,24 @@ describe("sortRecommendations（Key % 优先，相似度其次）", () => {
 });
 
 describe("buildPerformanceCell（表现列压缩格式化）", () => {
-  it("有 Key %：Key 突出 + Parse %/DPS 灰显", () => {
-    expect(buildPerformanceCell(88, 96, 12_345, "dps")).toEqual({
-      key: "Key % 88",
-      secondary: "Parse % 96 · DPS 12.3k",
-      dps: null,
-    });
-  });
-
-  it("有 Key % 但无 Parse %：Key + DPS", () => {
-    expect(buildPerformanceCell(88, null, 12_345, "dps")).toEqual({
+  it("有 Key %：Key 突出 + DPS 灰显", () => {
+    expect(buildPerformanceCell(88, 12_345, "dps")).toEqual({
       key: "Key % 88",
       secondary: "DPS 12.3k",
       dps: null,
     });
   });
 
+  it("有 Key % 但无 DPS：仅 Key", () => {
+    expect(buildPerformanceCell(88, null, "dps")).toEqual({
+      key: "Key % 88",
+      secondary: null,
+      dps: null,
+    });
+  });
+
   it("无 Key %：只显 DPS（兜底）", () => {
-    expect(buildPerformanceCell(null, 96, 12_345, "dps")).toEqual({
+    expect(buildPerformanceCell(null, 12_345, "dps")).toEqual({
       key: null,
       secondary: null,
       dps: "DPS 12.3k",
@@ -103,7 +103,7 @@ describe("buildPerformanceCell（表现列压缩格式化）", () => {
   });
 
   it("全无数据：dps 为 null（渲染层回退「—」）", () => {
-    expect(buildPerformanceCell(null, null, null, "dps")).toEqual({
+    expect(buildPerformanceCell(null, null, "dps")).toEqual({
       key: null,
       secondary: null,
       dps: null,
@@ -115,7 +115,6 @@ describe("buildRecommendationRow / buildLevelRange（行渲染）", () => {
   const input = {
     level: 10,
     keyPercent: 88,
-    parsePercent: 96,
     amount: 12_345,
     metricName: "dps",
     compSimilarity: 0.87,
@@ -129,7 +128,7 @@ describe("buildRecommendationRow / buildLevelRange（行渲染）", () => {
   it("单行字段：层数/表现/阵容/路线/时长/日期/限时", () => {
     expect(buildRecommendationRow(input)).toEqual({
       level: "10",
-      performance: { key: "Key % 88", secondary: "Parse % 96 · DPS 12.3k", dps: null },
+      performance: { key: "Key % 88", secondary: "DPS 12.3k", dps: null },
       comp: "87%",
       route: "60%",
       duration: "27 分 30 秒",

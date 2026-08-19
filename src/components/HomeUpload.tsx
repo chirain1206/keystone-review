@@ -518,10 +518,10 @@ export default function HomeUpload() {
                               )}
                             </span>
                             <span className="rec-sim">
-                              <span className="rec-lbl">阵容</span> {row.comp}
+                              <span className="rec-lbl">{lang === "en" ? "Comp" : "阵容相似度"}</span> {row.comp}
                             </span>
                             <span className="rec-sim">
-                              <span className="rec-lbl">路线</span> {row.route}
+                              <span className="rec-lbl">{lang === "en" ? "Route" : "路线相似度"}</span> {row.route}
                             </span>
                             <span className="rec-dur">{row.duration}</span>
                             <span className="rec-date">{row.date}</span>

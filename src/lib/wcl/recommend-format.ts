@@ -63,27 +63,18 @@ export function formatKeyPercent(value: number | null): string {
   return `Key % ${Math.round(value)}`;
 }
 
-/** Parse % → "Parse % 96"；null/0 → null（不展示）。 */
-function formatParsePercent(value: number | null): string | null {
-  if (value === null || Number.isNaN(value) || value <= 0) return null;
-  return `Parse % ${Math.round(value)}`;
-}
-
 /**
- * 该专精玩家表现："Key % 88 · Parse % 96 · DPS 12.3k"（有数据时拼接）；
+ * 该专精玩家表现："Key % 88 · DPS 12.3k"（有数据时拼接）；
  * Key % 缺失时回退 "DPS 12.3k"；全无 → "—"。
  */
 export function formatPerformance(
   keyPercent: number | null,
-  parsePercent: number | null,
   amount: number | null,
   metricName?: string | null,
 ): string {
   const parts: string[] = [];
   const k = formatKeyPercent(keyPercent);
   if (k !== "Key % —") parts.push(k);
-  const p = formatParsePercent(parsePercent);
-  if (p) parts.push(p);
   const a = formatAmount(amount, metricName);
   if (a !== "—") parts.push(a);
   return parts.length > 0 ? parts.join(" · ") : "—";
@@ -98,13 +89,13 @@ export interface RecommendationLike {
 }
 
 /**
- * 表现列（压缩两段式）：Key % 突出显示 + Parse %/DPS 小字灰显；无 Key % 时只显 DPS。
+ * 表现列（压缩两段式）：Key % 突出显示 + DPS 小字灰显；无 Key % 时只显 DPS。
  * 返回结构化字段供组件分样式渲染（Key % 高亮、次要信息灰显、纯 DPS 兜底）。
  */
 export interface PerformanceCell {
   /** 突出显示的 Key %（如 "Key % 88"）；无 Key % 时为 null。 */
   key: string | null;
-  /** Key % 存在时的次要信息（"Parse % 96 · DPS 12.3k"，小字灰显）；无 Key % 时为 null。 */
+  /** Key % 存在时的次要信息（"DPS 12.3k"，小字灰显）；无 Key % 或全无数据时为 null。 */
   secondary: string | null;
   /** 无 Key % 时的 DPS 兜底（正常字号）；有 Key % 或全无数据时为 null。 */
   dps: string | null;
@@ -113,21 +104,15 @@ export interface PerformanceCell {
 /** 表现列压缩格式化（纯函数，便于单测）。 */
 export function buildPerformanceCell(
   keyPercent: number | null,
-  parsePercent: number | null,
   amount: number | null,
   metricName?: string | null,
 ): PerformanceCell {
   const hasKey = keyPercent !== null && !Number.isNaN(keyPercent) && keyPercent > 0;
   if (hasKey) {
-    const parts: string[] = [];
-    if (parsePercent !== null && !Number.isNaN(parsePercent) && parsePercent > 0) {
-      parts.push(`Parse % ${Math.round(parsePercent)}`);
-    }
     const a = formatAmount(amount, metricName);
-    if (a !== "—") parts.push(a);
     return {
       key: `Key % ${Math.round(keyPercent)}`,
-      secondary: parts.length > 0 ? parts.join(" · ") : null,
+      secondary: a === "—" ? null : a,
       dps: null,
     };
   }
@@ -139,7 +124,7 @@ export function buildPerformanceCell(
 export interface RecommendationRow {
   /** 层数文案（如 "10"）；缺失 → "—"。 */
   level: string;
-  /** 该专精表现（Key % 突出 + Parse %/DPS 灰显 / 纯 DPS 兜底）。 */
+  /** 该专精表现（Key % 突出 + DPS 灰显 / 纯 DPS 兜底）。 */
   performance: PerformanceCell;
   /** 阵容相似度文案（如 "87%"；缺失 → "—"）。 */
   comp: string;
@@ -159,7 +144,6 @@ export interface RecommendationRow {
 export interface RecommendationRowInput {
   level: number | null;
   keyPercent: number | null;
-  parsePercent: number | null;
   amount: number | null;
   metricName: string | null;
   compSimilarity: number | null;
@@ -179,12 +163,7 @@ export function buildRecommendationRow(
   const nowMs = opts.nowMs ?? Date.now();
   return {
     level: input.level !== null && input.level !== undefined ? String(input.level) : "—",
-    performance: buildPerformanceCell(
-      input.keyPercent,
-      input.parsePercent,
-      input.amount,
-      input.metricName,
-    ),
+    performance: buildPerformanceCell(input.keyPercent, input.amount, input.metricName),
     comp: formatPercent(input.compSimilarity),
     route: formatRouteSimilarity(input.routeSimilarity),
     duration: formatDurationSec(input.durationSec),
