@@ -7,6 +7,8 @@ import { toProcessedLog, type CombatRun, type ParseResult } from "@/lib/parser/p
 import { estimateProcessedLogTokens } from "@/lib/ai/tokens";
 import { getTurnstileToken } from "@/lib/client/turnstile";
 import { dungeonDisplayName } from "@/lib/wcl/dungeon-names";
+import { filterPlayersByFight } from "@/lib/wcl/players";
+import { shouldShowFightSelector } from "@/lib/wcl/link-preview";
 
 /** from-link 预览返回的战斗与角色。 */
 interface LinkFight {
@@ -17,6 +19,8 @@ interface LinkFight {
   durationSec: number;
   affixes: string[];
   selected?: boolean;
+  /** 该场战斗实际参与的玩家 actor id 列表（WCL Fight.friendlyPlayers），用于复盘对象按场次过滤。 */
+  playerIds?: number[] | null;
 }
 interface LinkPlayer {
   id: number;
@@ -62,6 +66,25 @@ export default function HomeUpload() {
   const [selectedFightId, setSelectedFightId] = useState<number | null>(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState<number | null>(null);
   const [linkMock, setLinkMock] = useState(false);
+
+  // 选中战斗对应的参与玩家（复盘对象候选）：单场/多场均按所选场次过滤，而非整份报告玩家
+  const selectedFight = linkFights?.find((f) => f.id === selectedFightId) ?? null;
+  const visiblePlayers =
+    linkPlayers && selectedFight
+      ? filterPlayersByFight(linkPlayers, selectedFight.playerIds)
+      : linkPlayers;
+  // 单场大秘境报告自动跳过"选战斗"步骤；多场保持列表选择
+  const showFightSelector = linkFights ? shouldShowFightSelector(linkFights) : false;
+
+  // 切换战斗：同步切换复盘对象候选，并把预选重置为该场的上传者/第一人
+  const onFightSelect = (fightId: number) => {
+    setSelectedFightId(fightId);
+    const fight = linkFights?.find((f) => f.id === fightId);
+    const visible =
+      fight && linkPlayers ? filterPlayersByFight(linkPlayers, fight.playerIds) : linkPlayers;
+    const next = visible?.find((p) => p.isUploader) ?? visible?.[0];
+    setSelectedPlayerId(next?.id ?? null);
+  };
 
   const showError = (msg: string) => {
     setError(msg);
@@ -280,44 +303,49 @@ export default function HomeUpload() {
           {linkFights && linkPlayers && (
             <div style={{ marginTop: 16 }}>
               <div style={{ height: 4 }} />
-              <label className="label">选择要复盘的一场战斗：</label>
-              <table className="list">
-                <thead>
-                  <tr>
-                    <th></th>
-                    <th>副本</th>
-                    <th>层数</th>
-                    <th>时长</th>
-                    <th>结果</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {linkFights.map((f) => (
-                    <tr key={f.id}>
-                      <td>
-                        <input
-                          type="radio"
-                          name="link-fight"
-                          checked={selectedFightId === f.id}
-                          onChange={() => setSelectedFightId(f.id)}
-                        />
-                      </td>
-                      <td>{dungeonDisplayName(f.name)}</td>
-                      <td>{f.level ?? "-"}</td>
-                      <td>
-                        {Math.floor(f.durationSec / 60)} 分 {f.durationSec % 60} 秒
-                      </td>
-                      <td>
-                        <span className={`badge ${f.success ? "badge-ok" : "badge-err"}`}>
-                          {f.success ? "限时成功" : "未限时"}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {/* 单场报告自动跳过战斗选择：仅多场展示选场列表 */}
+              {showFightSelector && (
+                <>
+                  <label className="label">选择要复盘的一场战斗：</label>
+                  <table className="list">
+                    <thead>
+                      <tr>
+                        <th></th>
+                        <th>副本</th>
+                        <th>层数</th>
+                        <th>时长</th>
+                        <th>结果</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {linkFights.map((f) => (
+                        <tr key={f.id}>
+                          <td>
+                            <input
+                              type="radio"
+                              name="link-fight"
+                              checked={selectedFightId === f.id}
+                              onChange={() => onFightSelect(f.id)}
+                            />
+                          </td>
+                          <td>{dungeonDisplayName(f.name)}</td>
+                          <td>{f.level ?? "-"}</td>
+                          <td>
+                            {Math.floor(f.durationSec / 60)} 分 {f.durationSec % 60} 秒
+                          </td>
+                          <td>
+                            <span className={`badge ${f.success ? "badge-ok" : "badge-err"}`}>
+                              {f.success ? "限时成功" : "未限时"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
 
-              <div style={{ height: 12 }} />
+                  <div style={{ height: 12 }} />
+                </>
+              )}
               <label className="label">选择复盘对象（本场涉及的角色）：</label>
               <table className="list">
                 <thead>
@@ -330,7 +358,7 @@ export default function HomeUpload() {
                   </tr>
                 </thead>
                 <tbody>
-                  {linkPlayers.map((p) => (
+                  {(visiblePlayers ?? []).map((p) => (
                     <tr key={p.id}>
                       <td>
                         <input
