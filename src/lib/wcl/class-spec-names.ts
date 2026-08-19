@@ -20,7 +20,9 @@
  *    恶魔猎手/唤魔师）；潜行者 = 国服官方现名（原"盗贼"）；萨满祭司 = 官方全名。
  *  - 专精名：cn.wowhead.com 各职业专精页 + 灰机wiki（warcraft.huijiwiki.com）+
  *    百度百科；唤魔师三专精"湮灭/恩护/增辉"以 wowhead cn 任务页
- *    "恩护，增辉或湮灭"与灰机wiki 为准（Preservation = 恩护，非"保护"）。
+ *    "恩护，增辉或湮灭"与灰机wiki 为准（Preservation = 恩护，非"保护"）；
+ *    恶魔猎手第三专精"吞噬者"（Devourer）为至暗之夜 12.0 前夕新增，以国服官方
+ *    专精名"吞噬者"核实（17173/网易官方转载 + 暴雪官方蓝贴）。
  */
 
 interface NameEntry {
@@ -47,7 +49,7 @@ const CLASS_ENTRIES: NameEntry[] = [
   { en: "Evoker", zh: "唤魔师" },
 ];
 
-/** 全部专精（当前版本 39 个 + 常见历史专精 2 个）。 */
+/** 全部专精（当前版本 40 个 + 常见历史专精 2 个）。 */
 const SPEC_ENTRIES: NameEntry[] = [
   // 战士
   { en: "Arms", zh: "武器" },
@@ -97,6 +99,7 @@ const SPEC_ENTRIES: NameEntry[] = [
   // 恶魔猎手
   { en: "Havoc", zh: "浩劫" },
   { en: "Vengeance", zh: "复仇" },
+  { en: "Devourer", zh: "吞噬者" }, // 至暗之夜 12.0 前夕新增第三专精
   // 唤魔师
   { en: "Devastation", zh: "湮灭" },
   { en: "Preservation", zh: "恩护" }, // 官方译名"恩护"，非"保护"

@@ -10,7 +10,7 @@ import {
 /**
  * 职业/专精名中英映射（国服首发本地化）：
  *  - 13 职业全收录（含 WCL 无空格驼峰与本地解析器带空格两套写法）
- *  - 全部专精（当前 39 + 历史 2）收录
+ *  - 全部专精（当前 40 + 历史 2，含至暗之夜 12.0 新增的恶魔猎手"吞噬者"）收录
  *  - 展示形式 = 国服译名 + 英文原名括号
  *  - 未收录原样返回英文（不报错、不改变历史行为）
  */
@@ -81,7 +81,7 @@ describe("职业/专精名中英映射", () => {
       // 德鲁伊
       "Balance", "Feral", "Guardian",
       // 恶魔猎手
-      "Havoc", "Vengeance",
+      "Havoc", "Vengeance", "Devourer",
       // 唤魔师
       "Devastation", "Preservation", "Augmentation",
       // 历史专精
@@ -104,6 +104,7 @@ describe("职业/专精名中英映射", () => {
     expect(translateSpecName("Augmentation")).toBe("增辉");
     expect(translateSpecName("Devastation")).toBe("湮灭");
     expect(translateSpecName("Outlaw")).toBe("狂徒");
+    expect(translateSpecName("Devourer")).toBe("吞噬者"); // 恶魔猎手第三专精（12.0）
   });
 
   it("展示形式 = 国服译名 + 英文原名括号", () => {

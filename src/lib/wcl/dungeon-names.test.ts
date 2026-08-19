@@ -3,7 +3,7 @@ import { dungeonDisplayName, translateDungeonName } from "@/lib/wcl/dungeon-name
 
 /**
  * 副本名中英映射（本地验收缺陷修复）：
- *  - 至暗之夜 12.1 第 2 赛季全部 8 本均收录
+ *  - 至暗之夜 12.0 第 1 赛季与 12.1 第 2 赛季各 8 本均收录
  *  - 展示形式 = 国服译名 + 英文原名括号
  *  - 未收录副本原样返回英文（不改变历史行为）
  */
@@ -24,6 +24,33 @@ describe("副本名中英映射", () => {
       expect(zh, en).toBeTruthy();
       expect(zh, en).not.toBe(en);
     }
+  });
+
+  it("至暗之夜 12.0 第 1 赛季 8 本全部收录且译名非空", () => {
+    const season1 = [
+      "Magister's Terrace",
+      "Maisara Caverns",
+      "Nexus-Point Xenas",
+      "Windrunner Spire",
+      "Algeth'ar Academy",
+      "Pit of Saron",
+      "Seat of the Triumvirate",
+      "Skyreach",
+    ];
+    for (const en of season1) {
+      const zh = translateDungeonName(en);
+      expect(zh, en).toBeTruthy();
+      expect(zh, en).not.toBe(en);
+    }
+  });
+
+  it("12.0 第 1 赛季新/回归副本译名样例（国服官方）", () => {
+    expect(translateDungeonName("Magister's Terrace")).toBe("魔导师平台");
+    expect(translateDungeonName("Maisara Caverns")).toBe("迈萨拉洞窟");
+    expect(translateDungeonName("Nexus-Point Xenas")).toBe("节点希纳斯");
+    expect(translateDungeonName("Windrunner Spire")).toBe("风行者之塔");
+    expect(translateDungeonName("Pit of Saron")).toBe("萨隆矿坑");
+    expect(translateDungeonName("Seat of the Triumvirate")).toBe("执政团之座");
   });
 
   it("展示形式 = 国服译名 + 英文原名括号", () => {

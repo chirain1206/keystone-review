@@ -7,6 +7,9 @@
  * "技能/副本名保留游戏内原名"），不做翻译。
  *
  * 译名核实来源（国服官方 / 中文社区维基）：
+ *  - 至暗之夜第 1 赛季（12.0）8 本：暴雪官方新闻「New Challenges are Ahead in the
+ *    Dungeons of Midnight」+ Icy Veins 赛季轮换（英文），国服译名对照暴雪官网
+ *    worldofwarcraft.blizzard.com/zh-cn 地下城成就页 + 17173 官方资讯
  *  - 至暗之夜第 2 赛季（12.1）8 本：暴雪国服官网新闻 24294369 + method.gg
  *  - 地心之战第 1 赛季、巨龙时代、暗影国度：灰机wiki / 百度百科 / wowhead 中文站
  */
@@ -21,6 +24,12 @@ const DUNGEON_NAME_ZH: Record<string, string> = {
   "King's Rest": "诸王之眠",
   "Temple of Sethraliss": "塞塔里斯神庙",
   "Ruby Life Pools": "红玉新生法池",
+
+  // ── 至暗之夜（Midnight）第 1 赛季（12.0）──
+  "Magister's Terrace": "魔导师平台",
+  "Maisara Caverns": "迈萨拉洞窟",
+  "Nexus-Point Xenas": "节点希纳斯",
+  "Windrunner Spire": "风行者之塔",
 
   // ── 地心之战（The War Within）第 1 赛季 ──
   "The Stonevault": "矶石宝库",
@@ -71,6 +80,10 @@ const DUNGEON_NAME_ZH: Record<string, string> = {
   "Darkheart Thicket": "暗心林地",
   "The Arcway": "魔法回廊",
   "Cathedral of Eternal Night": "永夜大教堂",
+  "Seat of the Triumvirate": "执政团之座",
+
+  // ── 巫妖王之怒（Wrath of the Lich King）常见大秘境 ──
+  "Pit of Saron": "萨隆矿坑",
 
   // ── 大灾变（Cataclysm）常见大秘境 ──
   "The Stonecore": "石岩之心",
