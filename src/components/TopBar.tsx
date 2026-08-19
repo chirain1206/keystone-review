@@ -41,7 +41,7 @@ export default function TopBar() {
   return (
     <header className="topbar">
       <Link className="brand" href="/">
-        <span aria-hidden>⚔️</span> WoW M+ AI 复盘教练
+        <span aria-hidden>⚔️</span> 钥石复盘
       </Link>
       <nav className="nav-links">
         <Link href="/">生成复盘</Link>

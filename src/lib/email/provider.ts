@@ -53,15 +53,15 @@ export async function sendEmail(input: SendEmailInput): Promise<{ ok: boolean; e
 export async function sendVerificationCodeEmail(to: string, code: string): Promise<boolean> {
   const r = await sendEmail({
     to,
-    subject: "你的 WoW M+ AI 复盘教练登录验证码",
+    subject: "你的钥石复盘登录验证码",
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
-        <h2 style="color:#c77800">WoW M+ AI 复盘教练</h2>
+        <h2 style="color:#c77800">钥石复盘</h2>
         <p>你的登录验证码：</p>
         <p style="font-size:28px;letter-spacing:6px;font-weight:bold">${code}</p>
         <p>验证码 10 分钟内有效。如非本人操作，请忽略本邮件。</p>
       </div>`,
-    text: `你的 WoW M+ AI 复盘教练登录验证码：${code}（10 分钟内有效）。如非本人操作，请忽略。`,
+    text: `你的钥石复盘登录验证码：${code}（10 分钟内有效）。如非本人操作，请忽略。`,
   });
   return r.ok;
 }

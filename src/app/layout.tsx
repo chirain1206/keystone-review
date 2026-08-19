@@ -6,8 +6,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "WoW M+ AI 复盘教练",
-    template: "%s · WoW M+ AI 复盘教练",
+    default: "钥石复盘",
+    template: "%s · 钥石复盘",
   },
   description:
     "上传大秘境战斗日志，AI 生成 6 章复盘报告：战术意图识别、可改进点清单、下一步练习建议，并支持针对本场 log 的对话问答。",

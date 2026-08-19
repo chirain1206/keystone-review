@@ -44,7 +44,7 @@ export const envConfig = {
 
   // Resend
   resendApiKey: env("RESEND_API_KEY"),
-  emailFrom: env("EMAIL_FROM") || "WoW 复盘教练 <onboarding@wow-analyzer.local>",
+  emailFrom: env("EMAIL_FROM") || "钥石复盘 <onboarding@wow-analyzer.local>",
 
   // Warcraft Logs v2 API
   wclClientId: env("WCL_CLIENT_ID"),
