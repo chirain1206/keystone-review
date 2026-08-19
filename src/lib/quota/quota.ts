@@ -1,3 +1,4 @@
+import { envConfig } from "@/lib/env";
 import { getRepo } from "@/lib/db";
 
 /**
@@ -5,9 +6,21 @@ import { getRepo } from "@/lib/db";
  * 每个账号每天（自然日，按用户所在时区）可生成 3 次复盘。
  * 第 4 次被拒，提示"今日次数已用完，明天再来；深度复盘即将上线"。
  * 第一版不提供付费扣款。
+ *
+ * 每日额度默认 3（生产行为不变）；仅本地验收可用环境变量
+ * FREE_DAILY_REPORT_LIMIT 覆盖，只接受正整数，缺失/非法一律回退默认 3。
  */
 
-export const DAILY_REPORT_LIMIT = 3;
+/** 解析 FREE_DAILY_REPORT_LIMIT：仅正整数生效，缺失/非法回退默认 3。 */
+function resolveDailyReportLimit(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return 3;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : 3;
+}
+
+export const DAILY_REPORT_LIMIT = resolveDailyReportLimit(
+  envConfig.freeDailyReportLimit,
+);
 export const QUOTA_EXHAUSTED_MESSAGE =
   "今日次数已用完，明天再来；深度复盘即将上线";
 

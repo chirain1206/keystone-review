@@ -50,6 +50,9 @@ export const envConfig = {
     return env("ACTIVE_PATCH");
   },
 
+  // FR-7 每日免费复盘额度：默认 3；仅本地验收可用 FREE_DAILY_REPORT_LIMIT 覆盖（缺失/非法回退默认 3）
+  freeDailyReportLimit: env("FREE_DAILY_REPORT_LIMIT") || undefined,
+
   devLogCodes: env("DEV_LOG_CODES") === "true",
 } as const;
 
