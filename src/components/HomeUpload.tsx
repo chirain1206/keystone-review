@@ -50,6 +50,7 @@ interface Recommendation {
   routeSimilarity: number | null;
   combined: number | null;
   keyPercent: number | null;
+  keyPercentEstimated: boolean;
   parsePercent: number | null;
   amount: number | null;
   score: number | null;

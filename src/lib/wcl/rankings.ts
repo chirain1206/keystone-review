@@ -97,6 +97,8 @@ export interface ReferenceRecommendation {
   combined: number | null;
   /** Key %（同副本同层数同职业对比分位，0–100）；拿不到时为 null。 */
   keyPercent: number | null;
+  /** true = Key % 为估算值（bracketPercent 缺失/0 时由 best/totalParses 估算），展示加 "~" 前缀。 */
+  keyPercentEstimated: boolean;
   /** Parse %（全历史解析分位，0–100）；拿不到时为 null。 */
   parsePercent: number | null;
   /** 该专精玩家 DPS（Key % 缺失时的兜底排序指标）。 */
@@ -264,21 +266,46 @@ function parseEntry(item: unknown): RankingEntry | null {
   };
 }
 
+/** 解析 best（历史最佳名次，可能带 "~" 前缀）为数字；失败返回 null。 */
+export function parseBestRank(best: unknown): number | null {
+  if (typeof best === "number" && Number.isFinite(best) && best >= 0) return best;
+  if (typeof best === "string") {
+    const n = Number(best.replace(/^~\s*/, "").trim());
+    return Number.isInteger(n) && n >= 0 ? n : null;
+  }
+  return null;
+}
+
+/**
+ * 用 best（历史最佳名次）与 totalParses（该层样本总数）估算 Key %：
+ *   round(100 * (1 - bestRank / totalParses))，下限 0、上限 99。
+ * best/totalParses 缺失或非法时返回 null。
+ */
+export function estimateKeyPercent(best: unknown, totalParses: unknown): number | null {
+  const rank = parseBestRank(best);
+  const total =
+    typeof totalParses === "number" && Number.isFinite(totalParses) && totalParses > 0 ? totalParses : null;
+  if (rank === null || total === null) return null;
+  const pct = 100 * (1 - rank / total);
+  return Math.min(99, Math.max(0, Math.round(pct)));
+}
+
 /**
  * 从 reportData.report.rankings(...) 返回中提取该专精玩家的 Key %（bracketPercent）与
  * Parse %（rankPercent）。
  * 结构：{ data: [{ roles: { tanks/healers/dps: { characters: [{ spec, bracketPercent, rankPercent }] } } }] }。
- * bracketPercent/rankPercent 为 0 视为"未计算"（返回 null，交由 DPS 兜底）。
+ * bracketPercent 缺失/为 0 时，用 best（去掉 ~ 前缀）与 totalParses 估算 Key %（标记 keyPercentEstimated）。
  */
 export function extractSpecPercents(
   rankingsRaw: unknown,
   spec: string,
-): { keyPercent: number | null; parsePercent: number | null } {
+): { keyPercent: number | null; keyPercentEstimated: boolean; parsePercent: number | null } {
+  const empty = { keyPercent: null, keyPercentEstimated: false, parsePercent: null };
   const target = normalizeSpec(spec);
-  if (!target || target === "unknown") return { keyPercent: null, parsePercent: null };
+  if (!target || target === "unknown") return empty;
   const obj = rankingsRaw as Record<string, unknown> | null | undefined;
   const data = obj?.["data"];
-  if (!Array.isArray(data)) return { keyPercent: null, parsePercent: null };
+  if (!Array.isArray(data)) return empty;
   for (const entry of data) {
     const roles = (entry as Record<string, unknown>)?.["roles"] as Record<string, unknown> | undefined;
     if (!roles) continue;
@@ -291,14 +318,19 @@ export function extractSpecPercents(
         if (normalizeSpec(asString(rec["spec"]) ?? "") !== target) continue;
         const kp = asNumber(rec["bracketPercent"]);
         const pp = asNumber(rec["rankPercent"]);
-        return {
-          keyPercent: kp !== null && kp > 0 ? kp : null,
-          parsePercent: pp !== null && pp > 0 ? pp : null,
-        };
+        const parsePercent = pp !== null && pp > 0 ? pp : null;
+        if (kp !== null && kp > 0) {
+          return { keyPercent: kp, keyPercentEstimated: false, parsePercent };
+        }
+        // 兜底：bracketPercent 缺失/0 → 用 best + totalParses 估算
+        const estimated = estimateKeyPercent(rec["best"], rec["totalParses"]);
+        return estimated !== null
+          ? { keyPercent: estimated, keyPercentEstimated: true, parsePercent }
+          : { keyPercent: null, keyPercentEstimated: false, parsePercent };
       }
     }
   }
-  return { keyPercent: null, parsePercent: null };
+  return empty;
 }
 
 /** 层数范围过滤：[level - range, level + range]。 */
@@ -620,6 +652,7 @@ export interface ReportDetail {
   }[];
   players: WclPlayer[];
   keyPercent: number | null;
+  keyPercentEstimated: boolean;
   parsePercent: number | null;
 }
 
@@ -666,6 +699,7 @@ async function fetchReportDetail(
     })),
     players,
     keyPercent: percents.keyPercent,
+    keyPercentEstimated: percents.keyPercentEstimated,
     parsePercent: percents.parsePercent,
   };
 }
@@ -877,6 +911,7 @@ function mockRecommendations(input: RecommendReferencesInput): ReferenceRecommen
       success: metas[i].success,
       durationSec: 500 + i * 30,
       keyPercent: metas[i].keyPercent,
+      keyPercentEstimated: false,
       parsePercent: metas[i].parsePercent,
       amount: metas[i].amount,
       score: metas[i].score,
@@ -993,6 +1028,7 @@ export async function recommendReferences(
     success: boolean;
     durationSec: number;
     keyPercent: number | null;
+    keyPercentEstimated: boolean;
     parsePercent: number | null;
     amount: number | null;
     score: number | null;
@@ -1034,6 +1070,7 @@ export async function recommendReferences(
       success: fight.success,
       durationSec: fight.durationSec,
       keyPercent: detail.keyPercent,
+      keyPercentEstimated: detail.keyPercentEstimated,
       parsePercent: detail.parsePercent,
       amount: entry.amount,
       score: entry.score,
@@ -1059,6 +1096,7 @@ export async function recommendReferences(
         success: meta.success,
         durationSec: meta.durationSec,
         keyPercent: meta.keyPercent,
+        keyPercentEstimated: meta.keyPercentEstimated,
         parsePercent: meta.parsePercent,
         amount: meta.amount,
         score: meta.score,
@@ -1088,6 +1126,7 @@ export async function recommendReferences(
     routeSimilarity: c.routeSimilarity,
     combined: c.combined,
     keyPercent: c.keyPercent,
+    keyPercentEstimated: c.keyPercentEstimated,
     parsePercent: c.parsePercent,
     amount: c.amount,
     score: c.score,
