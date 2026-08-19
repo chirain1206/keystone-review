@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAuthProvider } from "@/lib/auth/provider";
+import { isExpert } from "@/lib/expert";
 
 export const maxDuration = 30;
 
@@ -11,5 +12,10 @@ export async function GET(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ ok: false, error: "未登录" }, { status: 401 });
   }
-  return NextResponse.json({ ok: true, user: { id: user.id, email: user.email } });
+  return NextResponse.json({
+    ok: true,
+    user: { id: user.id, email: user.email },
+    // 专家白名单标记：客户端据此显隐「知识库」入口（白名单解析在服务端，不泄露他人邮箱）
+    isExpert: isExpert(user.email),
+  });
 }

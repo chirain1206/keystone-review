@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 interface Me {
   ok: boolean;
   user?: { id: string; email: string };
+  isExpert?: boolean;
 }
 
 export default function TopBar() {
@@ -45,6 +46,7 @@ export default function TopBar() {
         {me?.ok ? (
           <>
             <Link href="/history">我的复盘</Link>
+            {me.isExpert && <Link href="/expert">知识库</Link>}
             <span style={{ color: "var(--text-dim)" }}>{me.user?.email}</span>
             <button className="btn btn-sm" onClick={logout}>
               登出
