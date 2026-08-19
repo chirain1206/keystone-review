@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ALL_CLASS_NAMES,
   classDisplayName,
   classSpecDisplayName,
   specDisplayName,
@@ -135,5 +136,13 @@ describe("职业/专精名中英映射", () => {
     expect(translateClassName("deathknight")).toBe("死亡骑士");
     expect(translateSpecName("unholy")).toBe("邪恶");
     expect(translateSpecName("BEAST MASTERY")).toBe("野兽控制");
+  });
+
+  it("ALL_CLASS_NAMES：13 职业英文原名（供专家页下拉/过滤）", () => {
+    expect(ALL_CLASS_NAMES).toHaveLength(13);
+    expect(ALL_CLASS_NAMES).toContain("Monk");
+    expect(ALL_CLASS_NAMES).toContain("Evoker");
+    expect(ALL_CLASS_NAMES).toContain("Demon Hunter");
+    expect(ALL_CLASS_NAMES).toContain("Death Knight");
   });
 });

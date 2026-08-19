@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
+import { classDisplayName, specDisplayName } from "@/lib/wcl/class-spec-names";
 
 const CLASS_SPECS: Record<string, string[]> = {
   Warrior: ["Arms", "Fury", "Protection"],
@@ -18,11 +20,19 @@ const CLASS_SPECS: Record<string, string[]> = {
   Evoker: ["Devastation", "Preservation", "Augmentation"],
 };
 
+interface DuplicateHint {
+  id: string;
+  title: string;
+  summary: string;
+  score: number;
+}
+
 interface SubmitResult {
   ok: boolean;
   error?: string;
   id?: string;
   patch?: string;
+  duplicates?: DuplicateHint[];
 }
 
 export default function ExpertSubmitPage() {
@@ -67,6 +77,11 @@ export default function ExpertSubmitPage() {
   return (
     <main style={{ maxWidth: 640, margin: "0 auto" }}>
       <h1 style={{ fontSize: 22 }}>专家知识提交</h1>
+      <nav style={{ display: "flex", gap: 12, marginBottom: 12, fontSize: 14 }}>
+        <Link href="/expert">提交</Link>
+        <Link href="/expert/review">审核</Link>
+        <Link href="/expert/kb">浏览</Link>
+      </nav>
       <p style={{ color: "var(--text-dim)" }}>
         提交手法要点，进入「候选」池待审核；审核通过前不会进入正式分析。
       </p>
@@ -76,12 +91,13 @@ export default function ExpertSubmitPage() {
         <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
           <select className="input" style={{ flex: 1 }} value={cls} onChange={(e) => onClassChange(e.target.value)}>
             {Object.keys(CLASS_SPECS).map((c) => (
-              <option key={c} value={c}>{c}</option>
+              <option key={c} value={c}>{classDisplayName(c)}</option>
             ))}
           </select>
           <select className="input" style={{ flex: 1 }} value={spec} onChange={(e) => setSpec(e.target.value)}>
+            <option value="*">通用（All）</option>
             {specs.map((s) => (
-              <option key={s} value={s}>{s}</option>
+              <option key={s} value={s}>{specDisplayName(s)}</option>
             ))}
           </select>
         </div>
@@ -117,6 +133,18 @@ export default function ExpertSubmitPage() {
 
         {result && !result.ok && (
           <div className="alert alert-error">提交失败：{result.error}</div>
+        )}
+        {result?.ok && (result.duplicates?.length ?? 0) > 0 && (
+          <div className="alert alert-warn">
+            疑似与已有知识重复，请确认是否仍要提交：
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {result.duplicates!.map((d) => (
+                <li key={d.id}>
+                  {d.title} — {d.summary}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         {result?.ok && (
           <div className="alert alert-ok">

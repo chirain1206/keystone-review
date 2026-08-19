@@ -126,6 +126,9 @@ function index(entries: NameEntry[]): Record<string, NameEntry> {
 const CLASS_MAP = index(CLASS_ENTRIES);
 const SPEC_MAP = index(SPEC_ENTRIES);
 
+/** 全部职业英文原名（国服顺序），供下拉/过滤选项用。 */
+export const ALL_CLASS_NAMES: readonly string[] = CLASS_ENTRIES.map((e) => e.en);
+
 /** 返回英文职业名对应的国服官方译名；查无则返回 null。 */
 export function translateClassName(english: string): string | null {
   return CLASS_MAP[normalizeKey(english)]?.zh ?? null;
