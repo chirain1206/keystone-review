@@ -8,7 +8,7 @@ import { estimateProcessedLogTokens } from "@/lib/ai/tokens";
 import { getTurnstileToken } from "@/lib/client/turnstile";
 import { dungeonDisplayName } from "@/lib/wcl/dungeon-names";
 import { classDisplayName, specDisplayName } from "@/lib/wcl/class-spec-names";
-import { filterPlayersByFight } from "@/lib/wcl/players";
+import { applyFightSpecs, filterPlayersByFight } from "@/lib/wcl/players";
 import { shouldShowFightSelector } from "@/lib/wcl/link-preview";
 import {
   buildLevelRange,
@@ -28,6 +28,8 @@ interface LinkFight {
   selected?: boolean;
   /** 该场战斗实际参与的玩家 actor id 列表（WCL Fight.friendlyPlayers），用于复盘对象按场次过滤。 */
   playerIds?: number[] | null;
+  /** 与 playerIds 一一对应的专精列表（WCL Fight.friendlySpecs），用于按场次覆盖专精。 */
+  playerSpecs?: string[] | null;
 }
 interface LinkPlayer {
   id: number;
@@ -104,12 +106,13 @@ export default function HomeUpload() {
   const [recommendBusy, setRecommendBusy] = useState(false);
   const [recommendNote, setRecommendNote] = useState("");
 
-  // 选中战斗对应的参与玩家（复盘对象候选）：单场/多场均按所选场次过滤，而非整份报告玩家
+  // 选中战斗对应的参与玩家（复盘对象候选）：单场/多场均按所选场次过滤 + 按场次覆盖专精
   const selectedFight = linkFights?.find((f) => f.id === selectedFightId) ?? null;
-  const visiblePlayers =
-    linkPlayers && selectedFight
-      ? filterPlayersByFight(linkPlayers, selectedFight.playerIds)
+  const playersForFight = (fight: LinkFight | null | undefined) =>
+    linkPlayers && fight
+      ? applyFightSpecs(filterPlayersByFight(linkPlayers, fight.playerIds), fight.playerIds, fight.playerSpecs)
       : linkPlayers;
+  const visiblePlayers = playersForFight(selectedFight);
   // 单场大秘境报告自动跳过"选战斗"步骤；多场保持列表选择
   const showFightSelector = linkFights ? shouldShowFightSelector(linkFights) : false;
 
@@ -119,8 +122,7 @@ export default function HomeUpload() {
     setRecommendations(null);
     setRecommendNote("");
     const fight = linkFights?.find((f) => f.id === fightId);
-    const visible =
-      fight && linkPlayers ? filterPlayersByFight(linkPlayers, fight.playerIds) : linkPlayers;
+    const visible = playersForFight(fight);
     const next = visible?.find((p) => p.isUploader) ?? visible?.[0];
     setSelectedPlayerId(next?.id ?? null);
   };

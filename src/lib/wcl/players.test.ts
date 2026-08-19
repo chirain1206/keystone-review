@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyFightSpecs,
   buildPlayers,
   filterPlayersByFight,
   mockPlayers,
@@ -119,5 +120,59 @@ describe("preselectPlayerId（预选）", () => {
       { id: 8, name: "B", class: "Rogue", spec: "Assassination", role: "dps" },
     ];
     expect(preselectPlayerId(players, "b")).toBe(8);
+  });
+});
+
+describe("buildPlayers（actors 顺序与 friendlyPlayers 顺序不同仍按 id 配对）", () => {
+  it("Winterember(913) 得到 Balance（不被 actors 列表顺序错配）", () => {
+    // 真实探测：friendlyPlayers=[884,1,1339,11,913]、friendlySpecs=["Mistweaver","Protection","Unholy","Elemental","Balance"]
+    // actors 顺序故意与 friendlyPlayers 顺序不同（Winterember 排最前）
+    const actors: WclActor[] = [
+      { id: 913, name: "Winterember", subType: "Druid", type: "Player" },
+      { id: 884, name: "Misty", subType: "Monk", type: "Player" },
+      { id: 1, name: "Tanky", subType: "Warrior", type: "Player" },
+      { id: 1339, name: "Unholy", subType: "DeathKnight", type: "Player" },
+      { id: 11, name: "Ele", subType: "Shaman", type: "Player" },
+    ];
+    const fights: WclFightPlayers[] = [
+      { id: 17, friendlyPlayers: [884, 1, 1339, 11, 913], friendlySpecs: ["Mistweaver", "Protection", "Unholy", "Elemental", "Balance"] },
+    ];
+    const { players } = buildPlayers(actors, fights);
+    const winter = players.find((p) => p.id === 913)!;
+    expect(winter.name).toBe("Winterember");
+    expect(winter.class).toBe("Druid");
+    expect(winter.spec).toBe("Balance"); // 关键：不得错配成其他专精
+    expect(winter.role).toBe("dps");
+  });
+});
+
+describe("applyFightSpecs（按场次覆盖专精，修复跨场次换专精错配）", () => {
+  const players: WclPlayer[] = [
+    { id: 913, name: "Winterember", class: "Druid", spec: "Feral", role: "dps" }, // 首见野性（错配）
+  ];
+
+  it("按所选场次的 friendlyPlayers id → friendlySpecs[i] 覆盖专精", () => {
+    const fight: WclFightPlayers = {
+      id: 17,
+      friendlyPlayers: [884, 1, 1339, 11, 913],
+      friendlySpecs: ["Mistweaver", "Protection", "Unholy", "Elemental", "Balance"],
+    };
+    const out = applyFightSpecs(players, fight.friendlyPlayers, fight.friendlySpecs);
+    expect(out[0].spec).toBe("Balance"); // 913 → Balance
+  });
+
+  it("无 fight 级专精信息时原样返回（不阻塞）", () => {
+    expect(applyFightSpecs(players, undefined, undefined)).toEqual(players);
+    expect(applyFightSpecs(players, [], [])).toEqual(players);
+  });
+
+  it("不改动入参", () => {
+    const fight: WclFightPlayers = {
+      id: 17,
+      friendlyPlayers: [913],
+      friendlySpecs: ["Balance"],
+    };
+    applyFightSpecs(players, fight.friendlyPlayers, fight.friendlySpecs);
+    expect(players[0].spec).toBe("Feral"); // 原数组未被修改
   });
 });

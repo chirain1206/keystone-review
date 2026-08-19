@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth/provider";
 import { getAccessToken, getWclReportMeta, parseWclUrl, selectFight } from "@/lib/wcl/adapter";
-import { filterPlayersByFight } from "@/lib/wcl/players";
+import { applyFightSpecs, filterPlayersByFight } from "@/lib/wcl/players";
 import { buildCompProfile } from "@/lib/route/comp-profile";
 import { dungeonPullsToFingerprint } from "@/lib/route/dungeon-pulls";
 import { fetchReportPulls, recommendReferences } from "@/lib/wcl/rankings";
@@ -43,7 +43,11 @@ export async function POST(req: NextRequest) {
   if (!fight) {
     return NextResponse.json({ ok: false, error: "未找到该场战斗" }, { status: 400 });
   }
-  const fightPlayers = filterPlayersByFight(meta.players, fight.friendlyPlayers);
+  const fightPlayers = applyFightSpecs(
+    filterPlayersByFight(meta.players, fight.friendlyPlayers),
+    fight.friendlyPlayers,
+    fight.friendlySpecs,
+  );
   const player = fightPlayers.find((p) => p.id === playerId);
   if (!player) {
     return NextResponse.json({ ok: false, error: "请选择有效的复盘对象" }, { status: 400 });

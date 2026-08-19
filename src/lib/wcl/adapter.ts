@@ -38,6 +38,8 @@ export interface WclFight {
   selected?: boolean;
   /** 该场战斗实际参与的玩家 actor id 列表（WCL Fight.friendlyPlayers），用于复盘对象按场次过滤。 */
   friendlyPlayers?: number[] | null;
+  /** 与 friendlyPlayers 一一对应的专精列表（WCL Fight.friendlySpecs），用于按场次覆盖专精。 */
+  friendlySpecs?: string[] | null;
 }
 
 export interface WclReportMeta {
@@ -334,6 +336,7 @@ async function fetchRealMeta(code: string, region: "www" | "cn"): Promise<WclRep
       playerClass: "Unknown",
       playerSpec: "Unknown",
       friendlyPlayers: f.friendlyPlayers ?? null,
+      friendlySpecs: f.friendlySpecs ?? null,
     })),
   };
 }

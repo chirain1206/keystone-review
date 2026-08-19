@@ -177,6 +177,35 @@ export function filterPlayersByFight<T extends { id: number }>(
   return filtered.length > 0 ? filtered : players;
 }
 
+/**
+ * 按某场战斗的 friendlyPlayers/friendlySpecs（同索引一一对应）覆盖玩家专精。
+ *
+ * 修复"跨场次换专精错配"：buildPlayers 产出的 spec 是**跨全部场次**按"首见非空生效"，
+ * 同一角色在不同场次换了专精时（如某场野性德、某场平衡德）会错配成首见的那个。
+ * 本函数**按所选场次**用 friendlyPlayers 的 id 连接 masterData 玩家，专精取同索引的
+ * friendlySpecs（禁止按数组下标跨列表配对），覆盖回正确专精。
+ * 返回新数组，不改动入参；无 fight 级专精信息时原样返回。
+ */
+export function applyFightSpecs<T extends { id: number; spec: string }>(
+  players: readonly T[],
+  friendlyPlayers: readonly (number | null | undefined)[] | null | undefined,
+  friendlySpecs: readonly (string | null | undefined)[] | null | undefined,
+): T[] {
+  const ids = friendlyPlayers ?? [];
+  const specs = friendlySpecs ?? [];
+  const specById = new Map<number, string>();
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    const spec = specs[i];
+    if (id !== undefined && id !== null && spec) specById.set(id, spec);
+  }
+  if (specById.size === 0) return [...players];
+  return players.map((p) => {
+    const spec = specById.get(p.id);
+    return spec ? { ...p, spec } : p;
+  });
+}
+
 /** mock：固定 5 人小队（无 WCL 密钥时的演示数据），DemoMage 标记为上传者。 */
 export function mockPlayers(): WclPlayer[] {
   return [

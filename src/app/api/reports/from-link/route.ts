@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth/provider";
 import { getRepo } from "@/lib/db";
 import { getWclReportMeta, parseWclUrl, selectFight, type WclFight } from "@/lib/wcl/adapter";
-import { filterPlayersByFight, preselectPlayerId, type WclPlayer } from "@/lib/wcl/players";
+import { applyFightSpecs, filterPlayersByFight, preselectPlayerId, type WclPlayer } from "@/lib/wcl/players";
 import type { ProcessedLog } from "@/lib/parser/schema";
 import { estimateProcessedLogTokens } from "@/lib/ai/tokens";
 import { enforceCreateLimits } from "@/lib/quota/enforce";
@@ -56,8 +56,12 @@ export async function POST(req: NextRequest) {
   }
   const isMock = metaResult.meta.isMock === true;
   const players = metaResult.meta.players;
-  // 复盘对象按所选场次过滤：该场实际参与的玩家（而非整份报告的玩家列表）
-  const fightPlayers = filterPlayersByFight(players, fight.friendlyPlayers);
+  // 复盘对象按所选场次过滤 + 按场次覆盖专精（同一角色跨场次换专精时用本场的 friendlySpecs）
+  const fightPlayers = applyFightSpecs(
+    filterPlayersByFight(players, fight.friendlyPlayers),
+    fight.friendlyPlayers,
+    fight.friendlySpecs,
+  );
 
   // ---------- 预览模式：返回战斗 + 角色列表（不扣每日额度） ----------
   if (playerId === undefined) {
@@ -78,6 +82,7 @@ export async function POST(req: NextRequest) {
         affixes: f.affixes,
         selected: f.selected === true,
         playerIds: f.friendlyPlayers ?? null,
+        playerSpecs: f.friendlySpecs ?? null,
       })),
       players,
       selectedFightId: fight.id,
