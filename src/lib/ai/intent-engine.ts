@@ -255,6 +255,12 @@ export interface SuspectedVerdict {
   explain: string; // 含证据与推断理由
   evidence: string;
   atSec?: number;
+  /**
+   * 归一化锚点（T20 多 log 交叉挖掘用）：把"何时发生"换算成"相对副本时间轴锚点的偏移"，
+   * 使不同 log 的相似操作可在统一坐标系下做重复性检测。
+   * note = 锚点说明（如易伤/阶段名），offsetSec = atSec - 锚点起点（可为负，负 = 锚点之前）。
+   */
+  anchor?: { note: string; offsetSec: number };
 }
 
 export function runSuspectedTechniqueDetection(
@@ -288,6 +294,8 @@ export function runSuspectedTechniqueDetection(
       key: "pet-preposition-before-phase",
       verdict: "suspected",
       atSec: pre[0].t,
+      // 跨 log 归一化锚点：相对该易伤/阶段窗口起点的偏移（负 = 阶段开始前）
+      anchor: { note: v.note ?? "阶段", offsetSec: pre[0].t - v.start },
       evidence,
       explain: `${evidence} 推断：可能是提前指挥宠物/召唤物走位就位，以规避转阶段落地/机制伤害的高阶技巧。知识库暂无对应解释，不武断判为失误，已沉淀为候选条目待人工审查。`,
     });
