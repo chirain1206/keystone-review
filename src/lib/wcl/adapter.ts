@@ -5,10 +5,11 @@ import { envConfig, requireProductionEnv } from "@/lib/env";
  *  - 有 WCL_CLIENT_ID/SECRET → 真实 OAuth client_credentials + GraphQL 查询
  *    （www 与 cn 域各自对应官方 API 端点；只做轻量元数据查询）
  *  - 无密钥（开发/mock）→ 根据链接结构合成元数据，流程可离线自测
- * 失败分级（FR-1 验收）：
- *   INVALID_LINK   不是 WCL 链接 → "不是 WCL 链接，可以上传日志文件代替"
- *   NOT_MYTHIC     链接本身指向团本/无法判定 → "仅支持大秘境"
- *   FETCH_FAILED   API 网络/配额失败 → "获取失败，请稍后重试或上传日志文件"
+ * 失败分级（FR-1 验收，用户引导式文案）：
+ *   INVALID_LINK    链接无效/过期 → "链接无效或报告已过期，请检查后重新粘贴，或上传日志文件"
+ *   NOT_MYTHIC      团本 → "第一版仅支持大秘境分析，请重新粘贴大秘境 log 链接，或上传战斗日志文件"
+ *   NO_MYTHIC_FIGHT 无大秘境战斗 → "该报告中没有大秘境战斗，请更换链接或上传日志文件"
+ *   FETCH_FAILED    API 网络/配额失败 → "WCL 数据获取失败（网络或平台故障），请稍后重试或上传日志文件"
  */
 
 export interface WclFight {
@@ -22,7 +23,7 @@ export interface WclFight {
   playerName: string; // 报告主角（best-effort）
   playerClass: string;
   playerSpec: string;
-  /** 链接 ?fight=N 指定的场次，作为前端默认选中/高亮（不丢失其余场次）。 */
+  /** 链接 ?fight=N（数字）或 ?fight=last 指定的场次，作为前端默认选中/高亮（不丢失其余场次）。 */
   selected?: boolean;
 }
 
@@ -40,33 +41,82 @@ export type WclResult =
   | { ok: true; meta: WclReportMeta }
   | { ok: false; code: WclErrorCode; message: string };
 
-const REPORT_URL_RE =
-  /^https:\/\/(?:(?:www|cn)\.)?warcraftlogs\.com\/reports\/([A-Za-z0-9]+)\/?(?:#[\w=-]+)?(?:\?.*)?$/i;
+/** 场次提示：链接 ?fight=N（数字，按场次 id 预选）或 ?fight=last（最后一场大秘境）。 */
+export type WclFightHint = number | "last";
 
-/** 从链接提取 ?fight=N（查询参数优先）或 #fight=N（旧版 hash）的场次 id。 */
-function extractFight(url: string): number | undefined {
-  const q = /[?&]fight=(\d+)/i.exec(url);
-  const h = /#fight=(\d+)/i.exec(url);
-  const raw = q?.[1] ?? h?.[1];
+/** 从 URL 的 query 与 hash 中提取 fight 提示（数字或 "last"），忽略 type/source 等视图参数。 */
+function extractFightHint(url: URL): WclFightHint | undefined {
+  // 查询参数优先于 hash（与旧实现一致）
+  const fromQuery = paramFromSearch(url.searchParams);
+  if (fromQuery !== undefined) return fromQuery;
+  return paramFromHash(url.hash);
+}
+
+/** 从 URLSearchParams 中取 fight 参数（键名大小写不敏感；值已由 URL 自动百分号解码）。 */
+function paramFromSearch(params: URLSearchParams): WclFightHint | undefined {
+  return parseFightValue(findFightParam(params));
+}
+
+/** hash 片段可能形如 "#fight=7"、"#fight=7&type=damage-done" 或 "#?fight=7"。 */
+function paramFromHash(hash: string): WclFightHint | undefined {
+  const raw = hash.replace(/^#/, "");
   if (!raw) return undefined;
-  const n = Number(raw);
+  const qs = raw.startsWith("?") ? raw.slice(1) : raw;
+  return parseFightValue(findFightParam(new URLSearchParams(qs)));
+}
+
+/** 大小写不敏感地查找 fight 参数（兼容 ?FIGHT=N / ?Fight=N）。 */
+function findFightParam(params: URLSearchParams): string | null {
+  for (const key of params.keys()) {
+    if (key.toLowerCase() === "fight") return params.get(key);
+  }
+  return null;
+}
+
+/** 归一化 fight 值："last" 大小写不敏感；数字需为正整数；其余（type/source 等）视为无提示。 */
+function parseFightValue(raw: string | null): WclFightHint | undefined {
+  if (raw === null) return undefined;
+  const v = raw.trim();
+  if (v === "") return undefined;
+  if (v.toLowerCase() === "last") return "last";
+  const n = Number(v);
   return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
+/**
+ * 用 WHATWG URL 解析替代/增强正则：接受
+ * `https://(www|cn).warcraftlogs.com/reports/CODE` 后跟任意 query 与 hash。
+ * 兼容大写（路径/参数名/值）与 URL 编码（new URL + URLSearchParams 自动解码）。
+ */
 export function parseWclUrl(url: string): {
   ok: boolean;
   code?: string;
   region?: "www" | "cn";
-  fight?: number;
+  fight?: WclFightHint;
 } {
-  const trimmed = url.trim();
-  const m = REPORT_URL_RE.exec(trimmed);
+  let u: URL;
+  try {
+    u = new URL(url.trim());
+  } catch {
+    return { ok: false };
+  }
+  if (u.protocol !== "https:") return { ok: false };
+
+  const host = u.hostname.toLowerCase();
+  let region: "www" | "cn";
+  if (host === "cn.warcraftlogs.com") region = "cn";
+  else if (host === "www.warcraftlogs.com" || host === "warcraftlogs.com") region = "www";
+  else return { ok: false };
+
+  // 路径形如 /reports/CODE（可选尾斜杠）；i 标志兼容大写路径，code 保留大小写。
+  const m = /^\/reports\/([A-Za-z0-9]+)\/?$/i.exec(u.pathname);
   if (!m) return { ok: false };
+
   return {
     ok: true,
     code: m[1],
-    region: /cn\.warcraftlogs\.com/i.test(trimmed) ? "cn" : "www",
-    fight: extractFight(trimmed),
+    region,
+    fight: extractFightHint(u),
   };
 }
 
@@ -213,10 +263,18 @@ async function fetchRealMeta(code: string, region: "www" | "cn"): Promise<WclRep
 
 // ---------- mock ----------
 
-/** mock：根据链接 code 稳定合成一场大秘境（code 含 "raid" 时模拟团本链接）。 */
+/**
+ * mock：根据链接 code 稳定合成元数据。
+ *  - code 含 "raid"   → 团本链接（1 场，keystoneLevel 为 null）
+ *  - code 含 "empty"  → 无任何战斗的报告（用于验证 NO_MYTHIC_FIGHT 文案）
+ *  - 其余             → 2 场大秘境
+ */
 function fetchMockMeta(code: string): WclReportMeta {
   const isRaid = /raid/i.test(code);
-  const fights: WclFight[] = isRaid
+  const isEmpty = /empty/i.test(code);
+  const fights: WclFight[] = isEmpty
+    ? []
+    : isRaid
     ? [
         {
           id: 1,
@@ -262,10 +320,33 @@ function fetchMockMeta(code: string): WclReportMeta {
 
 // ---------- 统一入口 ----------
 
+// FR-1 验收文案（用户引导式）：保持 WclErrorCode 语义不变。
+const MSG_INVALID_LINK = "链接无效或报告已过期，请检查后重新粘贴，或上传日志文件";
+const MSG_NOT_MYTHIC = "第一版仅支持大秘境分析，请重新粘贴大秘境 log 链接，或上传战斗日志文件";
+const MSG_NO_MYTHIC_FIGHT = "该报告中没有大秘境战斗，请更换链接或上传日志文件";
+const MSG_FETCH_FAILED = "WCL 数据获取失败（网络或平台故障），请稍后重试或上传日志文件";
+
+/**
+ * 按链接 fight 提示为大秘境场次打 selected 标记（不丢失任何场次）：
+ *  - fight=N  命中该 id 才打 selected；找不到该 id 则回退为无预选（保留全部场次）
+ *  - fight=last 选中最后一场大秘境
+ */
+function applyFightHint(fights: WclFight[], hint?: WclFightHint): WclFight[] {
+  if (hint === undefined) return fights;
+  if (hint === "last") {
+    // WCL 场次 id 随战斗开始顺序递增，最大 id 即时间上最后一场大秘境。
+    // 用 max(id) 而非"列表最后一项"更稳健：不依赖接口返回排序（与 WCL 语义一致）。
+    const lastId = fights.reduce((max, f) => Math.max(max, f.id), -Infinity);
+    return fights.map((f) => ({ ...f, selected: f.id === lastId }));
+  }
+  const hit = fights.some((f) => f.id === hint);
+  return hit ? fights.map((f) => ({ ...f, selected: f.id === hint })) : fights;
+}
+
 export async function getWclReportMeta(url: string): Promise<WclResult> {
   const parsed = parseWclUrl(url);
   if (!parsed.ok || !parsed.code) {
-    return { ok: false, code: "INVALID_LINK", message: "不是 WCL 链接，请粘贴 warcraftlogs.com 报告链接，或改用文件上传" };
+    return { ok: false, code: "INVALID_LINK", message: MSG_INVALID_LINK };
   }
 
   // 生产 fail-fast：缺 WCL 密钥直接抛错，禁止静默回退 mock 元数据（M-2）
@@ -281,28 +362,15 @@ export async function getWclReportMeta(url: string): Promise<WclResult> {
       return {
         ok: false,
         code: meta.fights.length > 0 ? "NOT_MYTHIC" : "NO_MYTHIC_FIGHT",
-        message:
-          meta.fights.length > 0
-            ? "该链接是团本记录，第一版仅支持大秘境分析，请上传大秘境战斗日志文件"
-            : "该报告中没有可分析的大秘境战斗",
+        message: meta.fights.length > 0 ? MSG_NOT_MYTHIC : MSG_NO_MYTHIC_FIGHT,
       };
     }
-    // 链接 ?fight=N 指定的场次标记为 selected（默认选中，不丢失其余场次）
-    const requestedFight = parsed.fight;
-    const fights =
-      requestedFight !== undefined
-        ? mythicFights.map((f) => ({ ...f, selected: f.id === requestedFight }))
-        : mythicFights;
-    return { ok: true, meta: { ...meta, fights } };
+    return { ok: true, meta: { ...meta, fights: applyFightHint(mythicFights, parsed.fight) } };
   } catch (err) {
     if (err instanceof Error && /不存在|过期|invalid|not found/i.test(err.message)) {
-      return { ok: false, code: "INVALID_LINK", message: "链接无效或报告已过期，请检查后重试" };
+      return { ok: false, code: "INVALID_LINK", message: MSG_INVALID_LINK };
     }
-    return {
-      ok: false,
-      code: "FETCH_FAILED",
-      message: "WCL 数据获取失败（网络或平台故障），请稍后重试或上传日志文件",
-    };
+    return { ok: false, code: "FETCH_FAILED", message: MSG_FETCH_FAILED };
   }
 }
 

@@ -46,6 +46,44 @@ describe("WCL 链接解析", () => {
     expect(parseWclUrl("https://example.com/reports/abc").ok).toBe(false);
     expect(parseWclUrl("随便一段文字").ok).toBe(false);
     expect(parseWclUrl("https://warcraftlogs.com/login").ok).toBe(false);
+    expect(parseWclUrl("http://www.warcraftlogs.com/reports/abc").ok).toBe(false);
+  });
+
+  it("支持 fight=last（query 与 hash 均可）", () => {
+    expect(parseWclUrl("https://www.warcraftlogs.com/reports/AbC123?fight=last").fight).toBe(
+      "last",
+    );
+    expect(parseWclUrl("https://www.warcraftlogs.com/reports/AbC123#fight=last").fight).toBe(
+      "last",
+    );
+  });
+
+  it("忽略 type/source 等视图参数，仅提取 fight", () => {
+    const r = parseWclUrl(
+      "https://www.warcraftlogs.com/reports/47pvKM3LkhnXyDwd?fight=11&type=damage-done&source=123",
+    );
+    expect(r.ok).toBe(true);
+    expect(r.code).toBe("47pvKM3LkhnXyDwd");
+    expect(r.fight).toBe(11);
+  });
+
+  it("兼容大写路径、参数名与值", () => {
+    expect(parseWclUrl("https://www.warcraftlogs.com/REPORTS/AbC123").code).toBe("AbC123");
+    expect(parseWclUrl("https://www.warcraftlogs.com/reports/AbC123?FIGHT=11").fight).toBe(11);
+    expect(parseWclUrl("https://www.warcraftlogs.com/reports/AbC123?fight=LAST").fight).toBe("last");
+  });
+
+  it("兼容 URL 编码与参数顺序无关", () => {
+    expect(parseWclUrl("https://www.warcraftlogs.com/reports/AbC123?type=damage-done&fight=%31%31").fight).toBe(11);
+    expect(parseWclUrl("https://www.warcraftlogs.com/reports/AbC123?fight=last&type=damage-done").fight).toBe("last");
+  });
+
+  it("hash 片段可携带附加视图参数", () => {
+    expect(parseWclUrl("https://www.warcraftlogs.com/reports/AbC123#fight=7&type=damage-done").fight).toBe(7);
+  });
+
+  it("code 保留尾斜杠仍可解析", () => {
+    expect(parseWclUrl("https://www.warcraftlogs.com/reports/AbC123/").code).toBe("AbC123");
   });
 });
 
@@ -109,16 +147,27 @@ describe("WCL 元数据（mock 适配器）", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.code).toBe("NOT_MYTHIC");
-      expect(r.message).toContain("大秘境");
+      expect(r.message).toBe(
+        "第一版仅支持大秘境分析，请重新粘贴大秘境 log 链接，或上传战斗日志文件",
+      );
     }
   });
 
-  it("无效链接：明确提示不是 WCL 链接", async () => {
+  it("无大秘境战斗的报告：明确引导更换链接或上传日志", async () => {
+    const r = await getWclReportMeta("https://www.warcraftlogs.com/reports/EmptyDemo");
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe("NO_MYTHIC_FIGHT");
+      expect(r.message).toBe("该报告中没有大秘境战斗，请更换链接或上传日志文件");
+    }
+  });
+
+  it("无效链接：明确提示链接无效或过期", async () => {
     const r = await getWclReportMeta("https://www.bilibili.com/video/123");
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.code).toBe("INVALID_LINK");
-      expect(r.message).toContain("WCL");
+      expect(r.message).toBe("链接无效或报告已过期，请检查后重新粘贴，或上传日志文件");
     }
   });
 
@@ -143,6 +192,27 @@ describe("WCL 元数据（mock 适配器）", () => {
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.meta.fights.some((f) => f.selected)).toBe(false);
+    }
+  });
+
+  it("?fight=last 预选最后一场大秘境且不丢失其他场次", async () => {
+    const r = await getWclReportMeta("https://www.warcraftlogs.com/reports/MplusDemo?fight=last");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.meta.fights).toHaveLength(2);
+      const selected = r.meta.fights.filter((f) => f.selected);
+      expect(selected.map((f) => f.id)).toEqual([9]); // 最大 fight id = 最后一场
+      expect(r.meta.fights.map((f) => f.id).sort((a, b) => a - b)).toEqual([7, 9]);
+    }
+  });
+
+  it("?fight=N 找不到对应场次时回退无预选并保留全部场次", async () => {
+    const r = await getWclReportMeta("https://www.warcraftlogs.com/reports/MplusDemo?fight=999");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.meta.fights).toHaveLength(2);
+      expect(r.meta.fights.some((f) => f.selected)).toBe(false);
+      expect(r.meta.fights.map((f) => f.id).sort((a, b) => a - b)).toEqual([7, 9]);
     }
   });
 });
