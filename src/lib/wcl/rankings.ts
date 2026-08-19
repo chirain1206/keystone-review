@@ -55,6 +55,34 @@ export function rankingMetric(): string {
   return raw || "dps";
 }
 
+/** 读非负整数环境变量；非法/缺失回退默认值。 */
+function envNonNegativeInt(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+}
+
+/**
+ * 候选时效性：新候选窗口（天，RECENCY_DAYS 环境变量，默认 14）。
+ *
+ * 语义说明：排行榜查询按"赛季 zone 的 encounter"检索，已天然限定在当前赛季；
+ * RECENCY_DAYS / MAX_AGE_DAYS 是对**赛季内**热修 / 职业改动窗口的额外保护——
+ * 更早打出的 log 可能依赖 bug 或改动前的数值，不宜直接作为对比基准。
+ * 该天数内的候选按原三层排序（Key % 降序 → 路线相似度 → 阵容相似度）。
+ */
+export function recencyDays(): number {
+  return envNonNegativeInt("RECENCY_DAYS", 14);
+}
+
+/**
+ * 候选最大年龄（天，MAX_AGE_DAYS 环境变量，默认 30）：超过该天数的候选直接过滤。
+ * 与 RECENCY_DAYS 之间（14–30 天）的候选保留但排在新候选之后，并标注"较早（注意职业改动）"。
+ */
+export function maxAgeDays(): number {
+  return envNonNegativeInt("MAX_AGE_DAYS", 30);
+}
+
 export interface ReferenceRecommendation {
   code: string;
   /** 该 log 的场次 id（用于 WCL 链接 #fight=N 直达）。 */
@@ -81,6 +109,10 @@ export interface ReferenceRecommendation {
   metricName: string | null;
   /** 候选报告 WCL 链接（带 #fight=N 直达该场）。 */
   url: string;
+  /** 战斗开始的绝对时间（epoch 毫秒）；拿不到时为 null（前端显示日期未知，不参与时效过滤）。 */
+  fightStartTimeMs: number | null;
+  /** true = 较早候选（RECENCY_DAYS 与 MAX_AGE_DAYS 之间），前端标注"较早（注意职业改动）"。 */
+  stale: boolean;
 }
 
 export interface ReferenceSearchResult {
@@ -350,6 +382,51 @@ export function rankRecommendations<T extends RankableCandidate>(items: readonly
   });
 }
 
+// ---------- 候选时效性（过滤 / 降权 / 标注，纯函数） ----------
+
+/** 候选需携带绝对战斗时间（epoch 毫秒，null 表示未知）。 */
+export interface RecencyInput {
+  fightStartTimeMs: number | null;
+}
+
+/** 时效分层结果。 */
+export interface RecencyRanked<T> {
+  item: T;
+  /** fresh = 新候选（RECENCY_DAYS 内或时间未知）；stale = 较早候选（14–30 天）。 */
+  recency: "fresh" | "stale";
+}
+
+/** 距今年龄（天）；时间未知 / 非法 / 未来 → null。 */
+export function ageInDays(fightStartTimeMs: number | null, nowMs: number): number | null {
+  if (fightStartTimeMs === null || !Number.isFinite(fightStartTimeMs) || fightStartTimeMs <= 0) {
+    return null;
+  }
+  const age = (nowMs - fightStartTimeMs) / (24 * 60 * 60 * 1000);
+  return age < 0 ? null : age;
+}
+
+/**
+ * 时效过滤与降权（在"Key % 优先，相似度其次"排序之后调用）：
+ *  - age > maxAgeDays（超过 MAX_AGE_DAYS）→ 过滤掉；
+ *  - recencyDays < age ≤ maxAgeDays → 保留但降权（排在新候选之后）并标注 stale；
+ *  - age ≤ recencyDays（含时间未知 null）→ 视为新候选，保持原相对顺序。
+ * 返回 [新候选…, 较早候选…]（各自内部仍保持传入顺序，即原三层排序）。
+ */
+export function rankByRecency<T extends RecencyInput>(
+  ranked: readonly T[],
+  opts: { nowMs: number; recencyDays: number; maxAgeDays: number },
+): RecencyRanked<T>[] {
+  const fresh: RecencyRanked<T>[] = [];
+  const stale: RecencyRanked<T>[] = [];
+  for (const item of ranked) {
+    const age = ageInDays(item.fightStartTimeMs, opts.nowMs);
+    if (age !== null && age > opts.maxAgeDays) continue;
+    const isStale = age !== null && age > opts.recencyDays;
+    (isStale ? stale : fresh).push({ item, recency: isStale ? "stale" : "fresh" });
+  }
+  return [...fresh, ...stale];
+}
+
 // ---------- GraphQL 查询 ----------
 
 const CHARACTER_RANKINGS_QUERY = `
@@ -403,11 +480,14 @@ query ReportFightPulls($code: String!, $fightId: Int) {
   }
 }`;
 
-/** 候选详情：fights（含 dungeonPulls）+ masterData + rankings（Key %/Parse %）。 */
+/** 候选详情：fights（含 dungeonPulls）+ masterData + rankings（Key %/Parse %）。
+ *  report.startTime（绝对 epoch 毫秒）+ fight.startTime（相对报告起点毫秒）→ 候选战斗绝对时间，
+ *  用于时效过滤（RECENCY_DAYS / MAX_AGE_DAYS）。 */
 const DETAIL_QUERY = `
 query ReportDetail($code: String!, $fightId: Int) {
   reportData {
     report(code: $code) {
+      startTime
       fights(killType: Kills) {
         id
         name
@@ -530,8 +610,11 @@ export interface ReportDetail {
     keystoneLevel: number | null;
     success: boolean;
     durationSec: number;
+    /** 战斗开始（相对报告起点毫秒），用于路线指纹对齐。 */
     startTime: number;
     endTime: number;
+    /** 战斗开始的绝对时间（epoch 毫秒）＝ report.startTime + fight.startTime；缺一不可时为 null。 */
+    startTimeMs: number | null;
     friendlySpecs: string[];
     pulls: DungeonPull[];
   }[];
@@ -551,6 +634,7 @@ async function fetchReportDetail(
   const { data } = await gqlQuery<{
     reportData?: {
       report?: {
+        startTime?: number | null;
         fights?: RawFight[] | null;
         masterData?: { actors?: { id?: number | null; name?: string | null; subType?: string | null; type?: string | null }[] | null } | null;
         rankings?: unknown;
@@ -558,6 +642,7 @@ async function fetchReportDetail(
     } | null;
   }>(region, token, DETAIL_QUERY, { code, fightId }, deps.fetchFn);
   const report = data.reportData?.report;
+  const reportStartTimeMs = report?.startTime ?? null;
   const fights = (report?.fights ?? []).filter((f) => f.keystoneLevel != null);
   const { players } = buildPlayers(
     report?.masterData?.actors ?? [],
@@ -574,6 +659,8 @@ async function fetchReportDetail(
         f.startTime != null && f.endTime != null ? Math.round((f.endTime - f.startTime) / 1000) : 0,
       startTime: f.startTime ?? 0,
       endTime: f.endTime ?? f.startTime ?? 0,
+      startTimeMs:
+        reportStartTimeMs != null && f.startTime != null ? reportStartTimeMs + f.startTime : null,
       friendlySpecs: f.friendlySpecs ?? [],
       pulls: parseRawPulls(f.dungeonPulls),
     })),
@@ -802,6 +889,9 @@ function mockRecommendations(input: RecommendReferencesInput): ReferenceRecommen
   });
   return rankRecommendations(items).map((c) => ({
     ...c,
+    // mock 无真实 WCL 数据：不伪造战斗时间，前端日期列显示"日期未知"、不参与时效过滤。
+    fightStartTimeMs: null,
+    stale: false,
     url: `https://www.warcraftlogs.com/reports/${c.code}#fight=${c.fightId}`,
   }));
 }
@@ -908,6 +998,7 @@ export async function recommendReferences(
     score: number | null;
     medal: string | null;
     metricName: string | null;
+    fightStartTimeMs: number | null;
   }[] = [];
 
   for (let i = 0; i < entries.length; i++) {
@@ -948,6 +1039,7 @@ export async function recommendReferences(
       score: entry.score,
       medal: entry.medal,
       metricName: entry.metricName,
+      fightStartTimeMs: fight.startTimeMs,
     });
   }
 
@@ -972,13 +1064,20 @@ export async function recommendReferences(
         score: meta.score,
         medal: meta.medal,
         metricName: meta.metricName,
+        fightStartTimeMs: meta.fightStartTimeMs,
         compSimilarity: cmp.compSimilarity,
         routeSimilarity: cmp.routeSimilarity,
         combined: cmp.combined,
       };
     }),
   );
-  const candidates: ReferenceRecommendation[] = ranked.map((c) => ({
+  // 时效过滤与降权：超过 MAX_AGE_DAYS 过滤；RECENCY_DAYS–MAX_AGE_DAYS 之间排后并标注 stale。
+  const recencyRanked = rankByRecency(ranked, {
+    nowMs: Date.now(),
+    recencyDays: recencyDays(),
+    maxAgeDays: maxAgeDays(),
+  });
+  const candidates: ReferenceRecommendation[] = recencyRanked.map(({ item: c, recency }) => ({
     code: c.code,
     fightId: c.fightId,
     dungeon: input.dungeon,
@@ -994,6 +1093,8 @@ export async function recommendReferences(
     score: c.score,
     medal: c.medal,
     metricName: c.metricName,
+    fightStartTimeMs: c.fightStartTimeMs,
+    stale: recency === "stale",
     url: `https://${region === "cn" ? "cn." : "www."}warcraftlogs.com/reports/${c.code}#fight=${c.fightId ?? ""}`,
   }));
 

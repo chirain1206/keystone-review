@@ -1,16 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ageInDays,
   clearSearchCache,
   dedupeByCode,
   extractSpecPercents,
   filterByLevelRange,
   limitEntries,
+  maxAgeDays,
   normalizeSpec,
   parseRankingEntries,
   RANKING_CANDIDATE_LIMIT,
   rangeLevels,
+  rankByRecency,
   rankRecommendations,
   rankingMetric,
+  recencyDays,
   recommendReferences,
   sortByAmountDesc,
   specMatchesTeam,
@@ -207,9 +211,19 @@ describe("专精/职业过滤", () => {
 });
 
 describe("环境变量配置", () => {
-  const prev = { range: process.env.RANGE_LEVELS, metric: process.env.RANKING_METRIC };
+  const prev = {
+    range: process.env.RANGE_LEVELS,
+    metric: process.env.RANKING_METRIC,
+    recency: process.env.RECENCY_DAYS,
+    maxAge: process.env.MAX_AGE_DAYS,
+  };
   afterEach(() => {
-    for (const [k, v] of Object.entries({ RANGE_LEVELS: prev.range, RANKING_METRIC: prev.metric })) {
+    for (const [k, v] of Object.entries({
+      RANGE_LEVELS: prev.range,
+      RANKING_METRIC: prev.metric,
+      RECENCY_DAYS: prev.recency,
+      MAX_AGE_DAYS: prev.maxAge,
+    })) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
@@ -220,6 +234,55 @@ describe("环境变量配置", () => {
     delete process.env.RANKING_METRIC;
     expect(rangeLevels()).toBe(1);
     expect(rankingMetric()).toBe("dps");
+  });
+
+  it("recencyDays 缺省 14；maxAgeDays 缺省 30；非法值回退", () => {
+    delete process.env.RECENCY_DAYS;
+    delete process.env.MAX_AGE_DAYS;
+    expect(recencyDays()).toBe(14);
+    expect(maxAgeDays()).toBe(30);
+    process.env.RECENCY_DAYS = "abc";
+    process.env.MAX_AGE_DAYS = "-5";
+    expect(recencyDays()).toBe(14);
+    expect(maxAgeDays()).toBe(30);
+  });
+});
+
+describe("候选时效性：ageInDays / rankByRecency", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = new Date("2026-08-20T12:00:00Z").getTime();
+  const item = (id: string, fightStartTimeMs: number | null) => ({ id, fightStartTimeMs });
+
+  it("ageInDays：正常 / 未知 / 非法 / 未来 → null", () => {
+    expect(ageInDays(now - 3 * DAY, now)).toBeCloseTo(3, 5);
+    expect(ageInDays(null, now)).toBeNull();
+    expect(ageInDays(0, now)).toBeNull();
+    expect(ageInDays(now + DAY, now)).toBeNull(); // 未来时间视为未知
+  });
+
+  it("新候选保持原顺序；较早候选排后并标注 stale；超龄过滤", () => {
+    const ranked = [
+      item("fresh2", now - 2 * DAY), // 2 天 → fresh
+      item("stale1", now - 20 * DAY), // 20 天 → stale
+      item("fresh1", now - 1 * DAY), // 1 天 → fresh
+      item("tooOld", now - 40 * DAY), // 40 天 → 过滤
+      item("unknown", null), // 未知 → fresh
+    ];
+    const out = rankByRecency(ranked, { nowMs: now, recencyDays: 14, maxAgeDays: 30 });
+    expect(out.map((r) => r.item.id)).toEqual(["fresh2", "fresh1", "unknown", "stale1"]);
+    expect(out.map((r) => r.recency)).toEqual(["fresh", "fresh", "fresh", "stale"]);
+    expect(out.find((r) => r.item.id === "tooOld")).toBeUndefined();
+  });
+
+  it("边界：age ≤ recencyDays 视为新；age > maxAgeDays 过滤", () => {
+    const ranked = [
+      item("at14", now - 14 * DAY), // 恰 14 天 → fresh（≤ RECENCY_DAYS）
+      item("at30", now - 30 * DAY), // 恰 30 天 → stale（≤ MAX_AGE_DAYS）
+      item("over30", now - (30 * DAY + 1)), // 超 30 → 过滤
+    ];
+    const out = rankByRecency(ranked, { nowMs: now, recencyDays: 14, maxAgeDays: 30 });
+    expect(out.map((r) => r.item.id)).toEqual(["at14", "at30"]);
+    expect(out.map((r) => r.recency)).toEqual(["fresh", "stale"]);
   });
 });
 
