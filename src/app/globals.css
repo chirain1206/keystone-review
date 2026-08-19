@@ -187,6 +187,11 @@ a:hover {
   border-color: rgba(70, 167, 88, 0.5);
   color: #9ed4a8;
 }
+.alert-warn {
+  background: rgba(240, 165, 0, 0.12);
+  border-color: rgba(240, 165, 0, 0.5);
+  color: #f6c86a;
+}
 
 /* ---- 报告渲染 ---- */
 .report-content h2 {

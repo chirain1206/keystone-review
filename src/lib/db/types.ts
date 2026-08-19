@@ -44,6 +44,8 @@ export interface Report {
     code?: string; // WCL report code
     note?: string;
   } | null;
+  /** true = 该复盘基于 mock 合成数据（未配置 WCL 密钥），前端显示"演示数据"标注。 */
+  mock?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -109,4 +111,5 @@ export interface CreateReportInput {
   playerClass: string;
   result: boolean | null;
   compareMeta?: Report["compareMeta"];
+  mock?: boolean;
 }

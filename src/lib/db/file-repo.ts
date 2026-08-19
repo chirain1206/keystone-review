@@ -124,6 +124,7 @@ export class FileRepo implements Repo {
         result: input.result,
         status: "parsed",
         compareMeta: input.compareMeta ?? null,
+        mock: input.mock ?? false,
         createdAt: now(),
         updatedAt: now(),
       };

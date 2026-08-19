@@ -51,6 +51,7 @@ export async function POST(req: NextRequest) {
   const fight =
     metaResult.meta.fights.find((f) => f.id === fightId) ??
     metaResult.meta.fights.sort((a, b) => (b.keystoneLevel ?? 0) - (a.keystoneLevel ?? 0))[0];
+  const isMock = metaResult.meta.isMock === true;
 
   // 对比基准（失败降级，不阻塞）
   let compareMeta: { url: string; title?: string; code?: string; note?: string } | null = null;
@@ -121,6 +122,7 @@ export async function POST(req: NextRequest) {
     playerClass: fight.playerClass,
     result: fight.success,
     compareMeta,
+    mock: isMock,
   });
   await repo.saveProcessedLog({
     reportId: report.id,

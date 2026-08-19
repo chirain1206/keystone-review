@@ -34,6 +34,7 @@ interface ReportInfo {
   status: string;
   sourceType: string;
   compareMeta: { url: string; title?: string; note?: string } | null;
+  mock?: boolean;
   createdAt: number;
 }
 interface Message {
@@ -315,6 +316,12 @@ export default function ReportView({ reportId }: { reportId: string }) {
   return (
     <main>
       <div className="card">
+        {report!.mock && (
+          <div className="alert alert-warn" style={{ marginBottom: 12 }}>
+            ⚠️ 演示数据（未配置 WCL 密钥）：本场战斗为示例内容，非真实 Warcraft Logs
+            数据。
+          </div>
+        )}
         <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <h1 style={{ margin: 0 }}>
             {report!.dungeon} · {report!.level} 层
