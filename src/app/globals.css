@@ -498,8 +498,10 @@ table.list th {
   color: var(--text-dim);
   margin: 18px 0 0;
 }
-/* Turnstile 人机验证组件容器（登录页，位于发送验证码按钮下方） */
+/* Turnstile 人机验证组件容器（登录页，位于发送验证码按钮下方）。
+   与邮箱输入框等宽（100%）；组件本身用 flexible 尺寸自适应容器宽度。 */
 .turnstile-widget {
+  width: 100%;
   min-height: 65px;
 }
 

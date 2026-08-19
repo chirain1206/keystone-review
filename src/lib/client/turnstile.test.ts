@@ -87,7 +87,7 @@ describe("Turnstile 客户端辅助", () => {
       const options = mock.api.render.mock.calls[0][1] as TurnstileOptions;
       expect(options.sitekey).toBe(SITE_KEY);
       expect(options.action).toBe("login");
-      expect(options.size).toBe("normal");
+      expect(options.size).toBe("flexible");
       expect(typeof options.callback).toBe("function");
       expect(typeof options["expired-callback"]).toBe("function");
       expect(typeof options["error-callback"]).toBe("function");

@@ -41,7 +41,7 @@ interface TurnstileRenderOptions {
   callback?: (token: string) => void;
   "expired-callback"?: () => void;
   "error-callback"?: (code?: string) => void;
-  size?: "normal" | "compact" | "invisible";
+  size?: "normal" | "compact" | "flexible" | "invisible";
   theme?: "light" | "dark" | "auto";
   [key: string]: unknown;
 }
@@ -119,7 +119,7 @@ export class TurnstileWidget {
       this.widgetId = window.turnstile.render(container, {
         sitekey: SITE_KEY,
         action: this.action,
-        size: this.mode === "invisible" ? "invisible" : "normal",
+        size: this.mode === "invisible" ? "invisible" : "flexible",
         callback: (token: string) => this.onToken(token),
         "expired-callback": () => this.onExpired(),
         "error-callback": () => this.onError(),
