@@ -13,6 +13,8 @@ const apiSecurityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // 本地验收：允许经 127.0.0.1 访问开发资源（仅 dev 生效，生产无影响）
+  allowedDevOrigins: ["127.0.0.1"],
   async headers() {
     return [
       {
