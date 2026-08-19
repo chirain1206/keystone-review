@@ -180,6 +180,53 @@ describe("FileRepo 数据隔离与级联（T2）", () => {
   });
 });
 
+describe("并发读写（Windows rename 冲突退避）", () => {
+  it("并发读 + 并发写章节不抛错且全部落盘（原子写 + rename 重试）", async () => {
+    const repo = new FileRepo();
+    const r = await repo.createReport({
+      userId: "user-concurrent",
+      sourceType: "file",
+      dungeon: "Grim Batol",
+      level: 12,
+      spec: "Fire",
+      playerName: "MageC",
+      playerClass: "Mage",
+      result: true,
+    });
+
+    // 读端：与写端并行高频直读（模拟 Windows 下读句柄短暂占用 rename 目标）
+    const reader = async () => {
+      for (let i = 0; i < 60; i++) {
+        await repo.getChaptersByReportId(r.id);
+        await repo.listReportsByUser("user-concurrent");
+      }
+    };
+    // 写端：两个 writer 各写 10 章（chapterNo 互不重叠）
+    const writer = async (offset: number) => {
+      for (let i = 0; i < 10; i++) {
+        await repo.upsertChapter({
+          reportId: r.id,
+          chapterNo: offset + i,
+          title: `章节 ${offset + i}`,
+          content: "并发写入内容",
+          status: "done",
+          tokensIn: 10,
+          tokensOut: 20,
+          costUsd: 0.0001,
+        });
+      }
+    };
+
+    await Promise.all([writer(0), writer(10), reader(), reader(), reader()]);
+
+    const chapters = await repo.getChaptersByReportId(r.id);
+    expect(chapters).toHaveLength(20);
+    expect(chapters.map((c) => c.chapterNo).sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 20 }, (_, i) => i),
+    );
+  });
+});
+
 describe("每日额度原子计数（M-3）", () => {
   it("并发 10 次 increment 结果 1..10 无重复（单进程原子）", async () => {
     const repo = new FileRepo();

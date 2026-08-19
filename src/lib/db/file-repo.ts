@@ -69,6 +69,36 @@ async function load<T>(name: CollectionName): Promise<Record<string, T>> {
   }
 }
 
+const RENAME_MAX_ATTEMPTS = 3;
+const RENAME_BASE_DELAY_MS = 50;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 原子落盘的最后一步 rename。Windows 上若并发读取正持有目标文件句柄，
+ * rename 会短暂报 EPERM/EACCES/EBUSY；指数退避重试（50ms → 100ms）吸收
+ * 这类瞬时冲突，保留原子写语义（先写 tmp 再 rename，绝不直接覆盖）。
+ */
+async function renameWithRetry(from: string, to: string): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < RENAME_MAX_ATTEMPTS; attempt++) {
+    try {
+      await fs.rename(from, to);
+      return;
+    } catch (err) {
+      lastErr = err;
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EPERM" && code !== "EACCES" && code !== "EBUSY") throw err;
+      if (attempt < RENAME_MAX_ATTEMPTS - 1) {
+        await sleep(RENAME_BASE_DELAY_MS * 2 ** attempt);
+      }
+    }
+  }
+  throw lastErr;
+}
+
 /** 锁内"读-改-写"：并行调用互不丢失更新。 */
 async function mutate<T>(
   name: CollectionName,
@@ -80,7 +110,7 @@ async function mutate<T>(
     await fs.mkdir(dataDir(), { recursive: true });
     const tmp = filePath(name) + `.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(data), "utf8");
-    await fs.rename(tmp, filePath(name));
+    await renameWithRetry(tmp, filePath(name));
   });
 }
 
