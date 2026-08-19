@@ -19,7 +19,7 @@ export interface NpcGroup {
 }
 
 export interface WaveSignature {
-  npcs: NpcGroup[]; // 按 name 排序
+  npcs: NpcGroup[]; // 保持拉怪进入顺序
   kind: "trash" | "boss";
   /** 该波之前出现的 boss 波数（时间锚段序号） */
   bossAnchor: number;
@@ -36,6 +36,13 @@ export interface RouteFingerprint {
 
 /** 判定为"同路线"的相似度阈值（T23 分组 / FR-12 验收参考）。 */
 export const SAME_ROUTE_THRESHOLD = 0.6;
+
+/**
+ * 单波同名怪展开上限（L-ROUTE-3）：flattenNames 按 n.count 逐个展开，
+ * 恶意构造 log 可让单波同名怪 count 极大，从而把 LCS 的 O(n×m) 表放大到 OOM。
+ * 对单个 NPC 组的展开数封顶，限制压平序列长度。
+ */
+export const MAX_NPC_EXPAND = 500;
 
 export function buildRouteFingerprint(run: TacticalRun): RouteFingerprint {
   const waves: WaveSignature[] = [];
@@ -99,7 +106,8 @@ function flattenNames(waves: WaveSignature[]): string[] {
   const out: string[] = [];
   for (const w of waves) {
     for (const n of w.npcs) {
-      for (let i = 0; i < n.count; i++) out.push(n.name);
+      const cnt = Math.min(n.count, MAX_NPC_EXPAND);
+      for (let i = 0; i < cnt; i++) out.push(n.name);
     }
   }
   return out;

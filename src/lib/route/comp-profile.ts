@@ -37,7 +37,9 @@ export const CLASS_ATTRS: Record<string, ClassAttrs> = {
   Rogue: { dmg: "melee", features: ["shroud", "stun"] },
   Priest: { dmg: "ranged", features: ["power-infusion", "mass-dispel", "fortitude"] },
   "Death Knight": { dmg: "melee", features: ["battle-rez", "grip", "anti-magic-zone"] },
-  Shaman: { dmg: "ranged", features: ["bloodlust", "tremor", "stun-totem"] },
+  // 萨满整类归 hybrid：增强为近战、元素/恢复为远程，spec 未知前取中性默认，
+  // 避免含增强萨的菜刀队被误计入远程位（QA-1）。
+  Shaman: { dmg: "hybrid", features: ["bloodlust", "tremor", "stun-totem"] },
   Mage: { dmg: "ranged", features: ["bloodlust", "intellect", "barrier"] },
   Warlock: { dmg: "ranged", features: ["battle-rez", "gateway", "healthstone"] },
   Monk: { dmg: "melee", features: ["ring-of-peace", "mystic-touch", "paralysis"] },

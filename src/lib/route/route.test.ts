@@ -95,6 +95,16 @@ describe("路线指纹与相似度（T22）", () => {
     expect(diff.entries.some((e) => e.kind === "order")).toBe(true);
     expect(diff.entries.some((e) => e.kind === "composition")).toBe(true);
   });
+
+  it("L-ROUTE-3：单波海量同名怪展开封顶（1000 vs 500 → 顺序相似度 1，不放大 O(n×m)）", () => {
+    const big = fp("A", [wave(Array(1000).fill("Pack Alpha"))]);
+    const cap = fp("B", [wave(Array(500).fill("Pack Alpha"))]);
+    // 展开封顶后两边同名怪均封顶为 500 → 压平序列一致 → 顺序相似度 1；
+    // 未封顶时 1000 vs 500 → 顺序相似度约 0.667。
+    const diff = routeDiff(big, cap);
+    expect(diff.orderSimilarity).toBeCloseTo(1, 5);
+    expect(routeSimilarity(big, cap)).toBeGreaterThanOrEqual(SAME_ROUTE_THRESHOLD);
+  });
 });
 
 describe("阵容画像与相似度（T22）", () => {
@@ -138,5 +148,26 @@ describe("阵容画像与相似度（T22）", () => {
     expect(empty.classes).toEqual([]);
     expect(empty.meleeCount).toBe(0);
     expect(empty.rangedCount).toBe(0);
+  });
+
+  it("QA-1：Shaman 为 hybrid（各计 0.5，不再整类误判为远程）", () => {
+    const shamanOnly = buildCompProfile([{ class: "Shaman" }]);
+    expect(shamanOnly.meleeCount).toBeCloseTo(0.5, 5);
+    expect(shamanOnly.rangedCount).toBeCloseTo(0.5, 5);
+  });
+
+  it('QA-1：含增强萨的队不再被萨满整类远程而翻转"法刀"标签', () => {
+    // 2 近战 + 2 远程 + 1 萨满：萨满曾整类归远程 → ranged=3 → 误判"法刀"；
+    // 改 hybrid 后 ranged=2.5 → "混合"。
+    const mixed = buildCompProfile([
+      { class: "Warrior" },
+      { class: "Rogue" },
+      { class: "Mage" },
+      { class: "Priest" },
+      { class: "Shaman" },
+    ]);
+    expect(mixed.meleeCount).toBeCloseTo(2.5, 5);
+    expect(mixed.rangedCount).toBeCloseTo(2.5, 5);
+    expect(mixed.tag).toBe("混合");
   });
 });
