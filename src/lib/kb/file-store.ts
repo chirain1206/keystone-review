@@ -8,7 +8,7 @@ import { KB_TOP_K_MAX } from "@/lib/kb/types";
 /**
  * 开发/mock 知识库存储（T14）：本地 JSON（.data/kb_documents.json）。
  * 检索语义与 Supabase 版本对齐：
- *  - meta 过滤：class/spec/dungeon（'*' 通用）type/patch（'general' 始终命中）
+ *  - meta 过滤：class；spec/dungeon（'*' = 全专精/全副本通用）；type；patch（'general' 始终命中）
  *  - 关键词评分排序（中文按双字词切分 + 英文词）
  *  - top-k 上限 5
  * 写入按 source_hash 幂等（重复执行不重复插入）。
@@ -76,6 +76,12 @@ function dungeonVisible(metaDungeon: string, filterDungeon: string | undefined):
   return metaDungeon === filterDungeon || metaDungeon === "*";
 }
 
+/** spec 过滤约定：meta.spec = '*' 表示该职业全专精通用，始终命中（与 dungeon='*' 同款）。 */
+function specVisible(metaSpec: string, filterSpec: string | undefined): boolean {
+  if (!filterSpec) return true;
+  return metaSpec === filterSpec || metaSpec === "*";
+}
+
 export class FileKbStore implements KbStore {
   async search(
     query: KbSearchQuery,
@@ -92,7 +98,7 @@ export class FileKbStore implements KbStore {
       const m = doc.meta;
       if (statusFilter && m.status !== statusFilter) continue;
       if (filters.class && m.class !== filters.class) continue;
-      if (filters.spec && m.spec !== filters.spec) continue;
+      if (!specVisible(m.spec, filters.spec)) continue;
       if (!dungeonVisible(m.dungeon, filters.dungeon)) continue;
       if (!patchVisible(m.patch, filters.patch)) continue;
       if (filters.type && m.type !== filters.type) continue;

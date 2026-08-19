@@ -112,6 +112,38 @@ describe("FileKbStore 检索（T14）", () => {
     expect(hits.every((h) => h.meta.dungeon === "*" || h.meta.dungeon === "Mists of Tirna Scithe")).toBe(true);
   });
 
+  it("spec 过滤：'*' 通用条目命中任意专精，指定专精条目只命中自身", async () => {
+    const store = new FileKbStore();
+    await store.upsert([
+      doc({
+        chunkText: "法师资源循环原理（全专精通用）。",
+        meta: { class: "Mage", spec: "*", dungeon: "*", patch: "12.1", type: "resource_management", source_url: "https://example.com/kb" },
+      }),
+      doc({
+        chunkText: "火焰法师爆发规划。",
+        meta: { class: "Mage", spec: "Fire", dungeon: "*", patch: "12.1", type: "burst_planning", source_url: "https://example.com/kb" },
+      }),
+    ]);
+
+    // 查询 Fire：命中 Fire 专属 + '*' 通用
+    const fire = await store.search(
+      { text: "资源 爆发 循环", vector: [] },
+      { class: "Mage", spec: "Fire", patch: "12.1" },
+      5,
+    );
+    expect(fire.some((h) => h.meta.spec === "*")).toBe(true);
+    expect(fire.every((h) => h.meta.spec === "Fire" || h.meta.spec === "*")).toBe(true);
+
+    // 查询 Arcane：只命中 '*' 通用（Arcane 无专属条目）
+    const arcane = await store.search(
+      { text: "资源 循环 原理", vector: [] },
+      { class: "Mage", spec: "Arcane", patch: "12.1" },
+      5,
+    );
+    expect(arcane.length).toBeGreaterThan(0);
+    expect(arcane.every((h) => h.meta.spec === "*")).toBe(true);
+  });
+
   it("patch 过滤：活跃补丁 12.1 只返回 12.1 + general，旧补丁 12.0 不注入", async () => {
     const store = await seed();
     const hits = await store.search(

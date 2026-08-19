@@ -42,6 +42,7 @@ revoke all on table public.kb_documents from anon, authenticated;
 
 -- 余弦相似度检索：按 class/spec/dungeon/patch/status 过滤，top-k 由 match_count 控制。
 -- patch 过滤约定：match_patch = 活跃补丁；meta.patch = 'general' 的内容始终可见。
+-- spec 过滤约定：meta.spec = '*' 表示该职业全专精通用，始终命中（与 dungeon='*' 同款约定）。
 -- dungeon 过滤约定：meta.dungeon = '*' 表示全副本通用，始终命中。
 -- status 过滤约定：缺省 'active'（候选/弃用条目绝不注入正式分析）。
 create or replace function public.match_kb_documents(
@@ -71,7 +72,11 @@ begin
     (1 - (kb.embedding <=> query_embedding)) as similarity
   from public.kb_documents kb
   where (match_class is null or kb.meta ->> 'class' = match_class)
-    and (match_spec is null or kb.meta ->> 'spec' = match_spec)
+    and (
+      match_spec is null
+      or kb.meta ->> 'spec' = match_spec
+      or kb.meta ->> 'spec' = '*'
+    )
     and (
       match_dungeon is null
       or kb.meta ->> 'dungeon' = match_dungeon

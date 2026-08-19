@@ -14,7 +14,8 @@ import type {
  *  - SupabaseKbStore：pgvector 余弦检索（迁移 0003 的 match_kb_documents）
  *  - FileKbStore：本地 JSON + 关键词匹配（开发/mock，无外部依赖）
  * 补丁过滤约定（FR-11）：filters.patch = 活跃补丁；meta.patch = 'general' 始终命中；
- * meta.dungeon = '*' 全副本通用始终命中。旧补丁内容不注入。
+ * meta.dungeon = '*' 全副本通用始终命中；meta.spec = '*' 该职业全专精通用始终命中。
+ * 旧补丁内容不注入。
  */
 export interface KbStore {
   search(query: KbSearchQuery, filters: KbSearchFilters, topK: number): Promise<KbHit[]>;
