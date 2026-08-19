@@ -10,6 +10,7 @@ import {
 } from "@/lib/qa/prompts";
 import { detectViolation, REFUSAL_MESSAGE } from "@/lib/qa/guard";
 import { generateKbDelimiters, retrieveKnowledge } from "@/lib/kb/retrieval";
+import { localizeAbilityNames } from "@/lib/wcl/ability-zh-names";
 
 /**
  * 问答服务（T7，FR-6）。
@@ -155,7 +156,8 @@ export async function askQuestion(
         cb?.onDelta?.(d);
       } },
     );
-    answer = result.content;
+    // 回答展示本地化：技能/药水/增益英文原名 → "国服译名（英文原名）"
+    answer = localizeAbilityNames(result.content);
   } catch (err) {
     // 生成失败：不落库错误回答，抛给路由层提示重试
     throw new Error(err instanceof Error ? err.message : "服务繁忙，请稍后重试");

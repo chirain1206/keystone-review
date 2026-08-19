@@ -15,6 +15,7 @@ import { CHAPTER_COUNT, CHAPTER_TITLES, type Report, type ReportChapter } from "
 import type { ProcessedLog } from "@/lib/parser/schema";
 import { generateKbDelimiters, retrieveKnowledge } from "@/lib/kb/retrieval";
 import { persistSuspectedCandidates } from "@/lib/kb/candidates";
+import { localizeAbilityNames } from "@/lib/wcl/ability-zh-names";
 
 /**
  * 复盘生成管线（T5，FR-4 / ADR-001）。
@@ -145,8 +146,10 @@ async function generateChapter(
 
       // 输出封顶（双保险：模型 maxTokens + 本地硬截断）
       const capChars = CHAPTER_OUTPUT_TOKEN_CAP * 3;
-      const content =
+      const rawContent =
         result.content.length > capChars ? result.content.slice(0, capChars) : result.content;
+      // 报告正文展示本地化：技能/药水/增益英文原名 → "国服译名（英文原名）"
+      const content = localizeAbilityNames(rawContent);
 
       const chapter = await repo.upsertChapter({
         reportId: report.id,
