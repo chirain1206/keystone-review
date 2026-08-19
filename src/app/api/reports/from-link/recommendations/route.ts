@@ -74,6 +74,7 @@ export async function POST(req: NextRequest) {
     dungeon: fight.name,
     level: fight.keystoneLevel ?? 2,
     spec: player.spec,
+    playerClass: player.class,
     region,
     userRoute,
     userComp,

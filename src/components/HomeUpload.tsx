@@ -49,8 +49,9 @@ interface Recommendation {
   compSimilarity: number | null;
   routeSimilarity: number | null;
   combined: number | null;
-  parsePercent: number | null;
   amount: number | null;
+  score: number | null;
+  medal: string | null;
   metricName: string | null;
   url: string;
 }
@@ -504,7 +505,7 @@ export default function HomeUpload() {
                             </td>
                             <td>{dungeonDisplayName(c.dungeon)}</td>
                             <td>{c.level ?? "-"}</td>
-                            <td>{formatPerformance(c.parsePercent, c.amount, c.metricName)}</td>
+                            <td>{formatPerformance(c.amount, c.metricName, c.score)}</td>
                             <td>{formatPercent(c.compSimilarity)}</td>
                             <td>{formatRouteSimilarity(c.routeSimilarity)}</td>
                             <td>{formatDurationSec(c.durationSec)}</td>

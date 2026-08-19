@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   formatAmount,
   formatDurationSec,
-  formatParse,
   formatPercent,
   formatPerformance,
   formatRouteSimilarity,
@@ -11,7 +10,7 @@ import {
 
 /**
  * 自动对比推荐前端纯展示函数验收：相似度百分比、路线"暂无"文案、时长、
- * 该专精玩家表现（parse/DPS），以及"表现优先，相似度其次"排序。
+ * 该专精玩家表现（DPS/score），以及"表现优先，相似度其次"排序。
  */
 
 describe("formatPercent / formatRouteSimilarity", () => {
@@ -35,47 +34,41 @@ describe("formatDurationSec", () => {
   });
 });
 
-describe("formatParse / formatAmount / formatPerformance", () => {
-  it("parse 分位 → 「parse 92%」，null → 「—」", () => {
-    expect(formatParse(92.4)).toBe("parse 92%");
-    expect(formatParse(null)).toBe("—");
-  });
-
+describe("formatAmount / formatPerformance", () => {
   it("指标值 → 「DPS 12.3k」，大数缩写，null → 「—」", () => {
     expect(formatAmount(12_345)).toBe("DPS 12.3k");
     expect(formatAmount(8_500, "hps")).toBe("HPS 8.5k");
-    expect(formatAmount(9_800)).toBe("DPS 9.8k");
     expect(formatAmount(null)).toBe("—");
   });
 
-  it("组合表现文案：有 parse/指标时拼接，皆无 → 「—」", () => {
-    expect(formatPerformance(92, 12_345, "dps")).toBe("parse 92% / DPS 12.3k");
-    expect(formatPerformance(null, 12_345, "dps")).toBe("DPS 12.3k");
-    expect(formatPerformance(92, null, "dps")).toBe("parse 92%");
-    expect(formatPerformance(null, null)).toBe("—");
+  it("组合表现文案：有 DPS/score 时拼接，皆无 → 「—」", () => {
+    expect(formatPerformance(12_345, "dps", 335)).toBe("DPS 12.3k · 335 分");
+    expect(formatPerformance(12_345, "dps", null)).toBe("DPS 12.3k");
+    expect(formatPerformance(null, "dps", 335)).toBe("335 分");
+    expect(formatPerformance(null, "dps", null)).toBe("—");
   });
 });
 
 describe("sortRecommendations（表现优先，相似度其次）", () => {
   const item = (
     id: string,
-    parsePercent: number | null,
+    amount: number | null,
     routeSimilarity: number | null,
     compSimilarity: number | null,
-  ) => ({ id, parsePercent, routeSimilarity, compSimilarity, combined: null });
+  ) => ({ id, amount, routeSimilarity, compSimilarity, combined: null });
 
-  it("主排序 parse 降序，null 排最后，再比路线/阵容", () => {
+  it("主排序 DPS 降序，null 排最后，再比路线/阵容", () => {
     const list = [
-      item("a", 90, 0.8, 0.9),
-      item("b", 95, 0.1, 0.1),
-      item("c", 90, 0.9, 0.5),
+      item("a", 11_000, 0.8, 0.9),
+      item("b", 13_000, 0.1, 0.1),
+      item("c", 11_000, 0.9, 0.5),
       item("d", null, 0.9, 0.8),
     ];
     expect(sortRecommendations(list).map((x) => x.id)).toEqual(["b", "c", "a", "d"]);
   });
 
   it("不改动入参", () => {
-    const list = [item("a", 90, 0.8, 0.9)];
+    const list = [item("a", 11_000, 0.8, 0.9)];
     sortRecommendations(list);
     expect(list[0].id).toBe("a");
   });
