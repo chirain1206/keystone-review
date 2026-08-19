@@ -9,6 +9,18 @@ function env(name: string): string {
   return process.env[name] ?? "";
 }
 
+/** 邮件发送方式（运行时动态读取，便于测试注入）。 */
+export type EmailMode = "supabase" | "resend";
+
+/**
+ * 解析 EMAIL_MODE：默认 'supabase'；取值 'supabase' | 'resend'（大小写不敏感，非法值回退 supabase）。
+ *  - supabase：Supabase Auth 自带邮件服务发送验证码（signInWithOtp，无需 SMTP/Resend 配置）
+ *  - resend：应用经 Resend REST 适配器发送验证码（需 RESEND_API_KEY + EMAIL_FROM）
+ */
+export function getEmailMode(): EmailMode {
+  return env("EMAIL_MODE").trim().toLowerCase() === "resend" ? "resend" : "supabase";
+}
+
 export const envConfig = {
   appUrl: env("APP_URL") || "http://localhost:3000",
 
@@ -24,6 +36,11 @@ export const envConfig = {
   deepseekApiKey: env("DEEPSEEK_API_KEY"),
   deepseekBaseUrl: env("DEEPSEEK_BASE_URL") || "https://api.deepseek.com",
   deepseekModel: env("DEEPSEEK_MODEL") || "deepseek-chat",
+
+  // 邮件发送方式（见 getEmailMode）：supabase=Supabase 自带邮件；resend=Resend 适配器
+  get emailMode(): EmailMode {
+    return getEmailMode();
+  },
 
   // Resend
   resendApiKey: env("RESEND_API_KEY"),
@@ -67,13 +84,11 @@ export function isProduction(): boolean {
   return process.env.NODE_ENV === "production";
 }
 
-/** 生产环境必需的密钥/配置清单（缺任一 → 拒绝以 mock 降级运行）。 */
-const PRODUCTION_REQUIRED_ENV: { key: string; label: string }[] = [
+/** 生产环境恒定必需的密钥/配置清单（缺任一 → 拒绝以 mock 降级运行）。 */
+const BASE_REQUIRED_ENV: { key: string; label: string }[] = [
   { key: "NEXT_PUBLIC_SUPABASE_URL", label: "NEXT_PUBLIC_SUPABASE_URL" },
   { key: "NEXT_PUBLIC_SUPABASE_ANON_KEY", label: "NEXT_PUBLIC_SUPABASE_ANON_KEY" },
   { key: "SUPABASE_SERVICE_ROLE_KEY", label: "SUPABASE_SERVICE_ROLE_KEY" },
-  { key: "RESEND_API_KEY", label: "RESEND_API_KEY" },
-  { key: "EMAIL_FROM", label: "EMAIL_FROM" },
   { key: "DEEPSEEK_API_KEY", label: "DEEPSEEK_API_KEY" },
   { key: "TURNSTILE_SECRET_KEY", label: "TURNSTILE_SECRET_KEY" },
   { key: "NEXT_PUBLIC_TURNSTILE_SITE_KEY", label: "NEXT_PUBLIC_TURNSTILE_SITE_KEY" },
@@ -84,15 +99,27 @@ const PRODUCTION_REQUIRED_ENV: { key: string; label: string }[] = [
   { key: "EMBEDDING_MODEL", label: "EMBEDDING_MODEL" },
 ];
 
+/** 仅 EMAIL_MODE=resend 时才要求的邮件密钥（supabase 模式由 Supabase 自带邮件发送，无需 Resend）。 */
+const RESEND_REQUIRED_ENV: { key: string; label: string }[] = [
+  { key: "RESEND_API_KEY", label: "RESEND_API_KEY" },
+  { key: "EMAIL_FROM", label: "EMAIL_FROM" },
+];
+
 /**
  * 校验生产必需配置；返回缺失项列表（非生产环境恒为空数组）。
  * 只读 process.env 的"键名"与 APP_URL 前缀，绝不把密钥值写入返回值。
+ * RESEND_API_KEY/EMAIL_FROM 仅在 EMAIL_MODE=resend 时强制要求。
  */
 export function validateProductionEnv(): string[] {
   if (!isProduction()) return [];
   const missing: string[] = [];
-  for (const { key, label } of PRODUCTION_REQUIRED_ENV) {
+  for (const { key, label } of BASE_REQUIRED_ENV) {
     if (!process.env[key]) missing.push(label);
+  }
+  if (getEmailMode() === "resend") {
+    for (const { key, label } of RESEND_REQUIRED_ENV) {
+      if (!process.env[key]) missing.push(label);
+    }
   }
   const appUrl = process.env.APP_URL ?? "";
   if (!appUrl.startsWith("https://")) {
