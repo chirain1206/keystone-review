@@ -4,11 +4,15 @@ import path from "node:path";
 import os from "node:os";
 import { getKbStore, resetKbStoreForTest } from "@/lib/kb";
 import {
+  DUPLICATE_SIMILARITY_THRESHOLD,
   buildCommunityChunkText,
   communitySourceHash,
+  findDuplicateCandidates,
   reviewCandidate,
   submitCommunityKnowledge,
 } from "@/lib/kb/community";
+import { mockEmbedding } from "@/lib/kb/embedding";
+import type { KbDocument } from "@/lib/kb/types";
 
 /**
  * 专家社区知识提交与审核（FR-11 增强）验收：
@@ -42,6 +46,26 @@ const GOOD = {
   content: "四豆起手开白虎，随后乾元之巅接怒雷破。",
   sourceUrl: "https://example.com/guide",
 };
+
+/** 预置一条已生效（active）条目，供查重用。 */
+function activeDoc(overrides: { id: string; chunkText: string; class: string; spec: string; patch?: string }): KbDocument {
+  return {
+    id: overrides.id,
+    chunkText: overrides.chunkText,
+    sourceHash: `hash-${overrides.id}`,
+    embedding: mockEmbedding(overrides.chunkText),
+    meta: {
+      class: overrides.class,
+      spec: overrides.spec,
+      dungeon: "*",
+      patch: overrides.patch ?? "12.1",
+      type: "intent_pattern",
+      source_url: "https://example.com/guide",
+      origin: "curated",
+      status: "active",
+    },
+  };
+}
 
 describe("提交校验与消毒", () => {
   it("正常提交落库 origin=community、status=candidate、patch=ACTIVE_PATCH", async () => {
@@ -154,5 +178,60 @@ describe("审核转状态 + 审计", () => {
 describe("buildCommunityChunkText", () => {
   it("标题与内容合并为片段文本", () => {
     expect(buildCommunityChunkText("标题", "内容")).toBe("标题\n内容");
+  });
+});
+
+describe("通用专精（spec='*'）", () => {
+  it("提交 spec='*' 后 meta.spec 存 '*'", async () => {
+    await submitCommunityKnowledge(
+      { class: "Monk", spec: "*", title: "通用要点", content: "全专精通用的资源循环原理。" },
+      "e@x.com",
+    );
+    const rows = await getKbStore().list({ status: "candidate" });
+    expect(rows[0].meta.spec).toBe("*");
+  });
+});
+
+describe("提交查重（向量相似度）", () => {
+  it("阈值常量 0.75；无 active 命中时返回空", async () => {
+    expect(DUPLICATE_SIMILARITY_THRESHOLD).toBe(0.75);
+    const dups = await findDuplicateCandidates("任意内容", mockEmbedding("任意内容"), "Mage", "12.1");
+    expect(dups).toEqual([]);
+  });
+
+  it("与已有 active 条目相似 → 返回疑似重复并存入候选 meta", async () => {
+    await getKbStore().upsert([
+      activeDoc({
+        id: "id-active-monk",
+        chunkText: "天神爆发起手\n四豆起手开白虎，随后乾元之巅接怒雷破。",
+        class: "Monk",
+        spec: "Windwalker",
+      }),
+    ]);
+    const result = await submitCommunityKnowledge(
+      { class: "Monk", spec: "Windwalker", title: "天神爆发起手", content: "四豆起手开白虎，随后乾元之巅接怒雷破。" },
+      "expert@example.com",
+    );
+    expect(result.duplicates.length).toBeGreaterThan(0);
+    expect(result.duplicates[0].title).toContain("天神爆发");
+
+    const rows = await getKbStore().list({ status: "candidate" });
+    expect(rows[0].meta.duplicates?.length).toBeGreaterThan(0);
+  });
+
+  it("内容不重叠（同职业）→ 无重复提示", async () => {
+    await getKbStore().upsert([
+      activeDoc({
+        id: "id-active-healer",
+        chunkText: "Rejuvenation uptime and Lifebloom refresh cadence.",
+        class: "Druid",
+        spec: "Restoration",
+      }),
+    ]);
+    const result = await submitCommunityKnowledge(
+      { class: "Druid", spec: "Restoration", title: "Ironfur mitigation", content: "Align Ironfur coverage to spike damage windows." },
+      "expert@example.com",
+    );
+    expect(result.duplicates).toEqual([]);
   });
 });

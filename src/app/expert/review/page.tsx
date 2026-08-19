@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { classDisplayName, specDisplayName } from "@/lib/wcl/class-spec-names";
 
 interface CandidateItem {
   id: string;
@@ -16,6 +18,7 @@ interface CandidateItem {
     status: string;
     submitted_by?: string;
     submitted_at?: string;
+    duplicates?: { id: string; title: string; summary: string; score: number }[];
   };
 }
 
@@ -26,6 +29,10 @@ interface ListResult {
 }
 
 const INTERNAL = "internal:inference";
+
+function specLabel(spec: string): string {
+  return spec === "*" ? "通用" : specDisplayName(spec);
+}
 
 export default function ExpertReviewPage() {
   const [items, setItems] = useState<CandidateItem[]>([]);
@@ -86,6 +93,11 @@ export default function ExpertReviewPage() {
   return (
     <main style={{ maxWidth: 760, margin: "0 auto" }}>
       <h1 style={{ fontSize: 22 }}>专家审核</h1>
+      <nav style={{ display: "flex", gap: 12, marginBottom: 12, fontSize: 14 }}>
+        <Link href="/expert">提交</Link>
+        <Link href="/expert/review">审核</Link>
+        <Link href="/expert/kb">浏览</Link>
+      </nav>
       <p style={{ color: "var(--text-dim)" }}>
         候选条目（通过前不进入正式分析）；通过 → 生效，驳回 → 弃用。
       </p>
@@ -99,10 +111,22 @@ export default function ExpertReviewPage() {
       {items.map((it) => (
         <div className="card" key={it.id}>
           <div style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 6 }}>
-            {it.meta.class} / {it.meta.spec} · 补丁 {it.meta.patch} · 提交{" "}
+            {classDisplayName(it.meta.class)} / {specLabel(it.meta.spec)} · 补丁 {it.meta.patch} · 提交{" "}
             {fmtTime(it.meta.submitted_at)} · {it.meta.submitted_by ?? "—"}
           </div>
           <div style={{ whiteSpace: "pre-wrap", marginBottom: 10 }}>{it.chunkText}</div>
+          {it.meta.duplicates && it.meta.duplicates.length > 0 && (
+            <div className="alert alert-warn">
+              疑似与以下已生效条目重复（提交时查重得出，请确认是否仍保留）：
+              <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                {it.meta.duplicates.map((d) => (
+                  <li key={d.id}>
+                    {d.title} — {d.summary}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 12 }}>
             来源：{it.meta.source_url === INTERNAL ? "（无外部来源）" : it.meta.source_url}
           </div>

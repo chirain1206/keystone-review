@@ -3,7 +3,7 @@ import { embedOne } from "@/lib/kb/embedding";
 import { getKbStore } from "@/lib/kb";
 import { resolveActivePatch } from "@/lib/kb/retrieval";
 import { assertSafeKbText, assertSafeSourceUrl, INTERNAL_SOURCE_URL, normalizeText } from "@/lib/kb/ingest";
-import type { KbDocument, KbMeta } from "@/lib/kb/types";
+import type { KbDocument, KbDuplicateHint, KbMeta } from "@/lib/kb/types";
 
 /**
  * 专家社区知识提交与审核（FR-11 增强）。
@@ -27,6 +27,8 @@ export interface CommunitySubmitInput {
 export interface SubmitResult {
   id: string;
   patch: string;
+  /** 疑似重复的已生效条目（相似度 ≥ 阈值），提交时随响应返回供前端提示。 */
+  duplicates: KbDuplicateHint[];
 }
 
 /** 标题 + 内容合并为单片段文本（知识库无独立 title 字段，标题作为正文首行）。 */
@@ -44,6 +46,57 @@ export function communitySourceHash(
   return createHash("sha256")
     .update([cls, spec, sourceUrl, normalizeText(chunkText)].join("|"))
     .digest("hex");
+}
+
+/** 疑似重复判定阈值：相似度 ≥ 0.75 视为"疑似重复"（Supabase 余弦相似度 0–1）。 */
+export const DUPLICATE_SIMILARITY_THRESHOLD = 0.75;
+
+/** 疑似重复的 top-k 候选数。 */
+const DUPLICATE_TOP_K = 3;
+
+/** 摘要截断长度（字符）。 */
+const DUPLICATE_SUMMARY_MAX = 100;
+
+/** 片段首行视为"标题"（社区提交把标题作为正文首行，见 buildCommunityChunkText）。 */
+function firstLine(text: string): string {
+  const line = text.split("\n")[0]?.trim() ?? "";
+  const value = line || text;
+  return value.length > 80 ? value.slice(0, 80) + "…" : value;
+}
+
+function summarize(text: string, max = DUPLICATE_SUMMARY_MAX): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length > max ? normalized.slice(0, max) + "…" : normalized;
+}
+
+/**
+ * 提交查重：对新内容做向量相似度检索（复用 embedding + KbStore.search），
+ * 只与同职业 + 当前补丁的已生效（status=active）条目比对，取 top-k，
+ * 相似度 ≥ 阈值者返回为"疑似重复"提示。不阻塞提交（仅提示）。
+ * 说明：Supabase 的 score 即余弦相似度（0–1）；FileKbStore（mock/开发）的 score
+ * 为关键词加权命中分（≥1 即命中），同一阈值在 mock 下更激进，仅用于本地联调。
+ */
+export async function findDuplicateCandidates(
+  text: string,
+  vector: number[],
+  cls: string,
+  patch: string,
+  topK = DUPLICATE_TOP_K,
+): Promise<KbDuplicateHint[]> {
+  const store = getKbStore();
+  const hits = await store.search(
+    { text, vector },
+    { class: cls, patch, status: "active" },
+    topK,
+  );
+  return hits
+    .filter((h) => h.score >= DUPLICATE_SIMILARITY_THRESHOLD)
+    .map((h) => ({
+      id: h.id,
+      title: firstLine(h.chunkText),
+      summary: summarize(h.chunkText),
+      score: Math.round(h.score * 1000) / 1000,
+    }));
 }
 
 /** 提交社区知识（origin=community、status=candidate）；校验失败抛中文友好错误。 */
@@ -75,6 +128,9 @@ export async function submitCommunityKnowledge(
   const sourceHash = communitySourceHash(cls, spec, sourceUrl, chunkText);
   const embedding = await embedOne(chunkText);
 
+  // 查重：与同职业 + 当前补丁的已生效条目比对（不阻塞，仅提示）
+  const duplicates = await findDuplicateCandidates(chunkText, embedding, cls, patch);
+
   const meta: KbMeta = {
     class: cls,
     spec,
@@ -86,10 +142,12 @@ export async function submitCommunityKnowledge(
     status: "candidate",
     submitted_by: submitterEmail,
     submitted_at: (opts.now ?? (() => new Date()))().toISOString(),
+    // 疑似重复的已生效条目存候选 meta，供审核页直接展示（提交时快照，信息准确）
+    ...(duplicates.length > 0 ? { duplicates } : {}),
   };
   const doc: KbDocument = { id: randomUUID(), chunkText, meta, sourceHash, embedding };
   await getKbStore().upsert([doc]);
-  return { id: doc.id, patch };
+  return { id: doc.id, patch, duplicates };
 }
 
 export type ReviewAction = "approve" | "reject";

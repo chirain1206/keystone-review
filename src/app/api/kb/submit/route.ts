@@ -37,7 +37,12 @@ export async function POST(req: NextRequest) {
       { class: cls, spec, title, content, sourceUrl },
       user!.email,
     );
-    return NextResponse.json({ ok: true, id: result.id, patch: result.patch });
+    return NextResponse.json({
+      ok: true,
+      id: result.id,
+      patch: result.patch,
+      duplicates: result.duplicates,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ ok: false, error: message }, { status: 400 });

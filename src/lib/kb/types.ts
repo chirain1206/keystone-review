@@ -6,7 +6,7 @@
 export interface KbMeta {
   /** 职业原名（Mage / Warrior / Hunter…） */
   class: string;
-  /** 专精原名（Fire / Protection / Beast Mastery…） */
+  /** 专精原名（Fire / Protection / Beast Mastery…）；"*" = 该职业全专精通用 */
   spec: string;
   /** 副本名（游戏原名）；"*" = 全副本通用 */
   dungeon: string;
@@ -28,6 +28,19 @@ export interface KbMeta {
   reviewed_by?: string;
   /** 审核时间 ISO（专家审核接口写入）。 */
   reviewed_at?: string;
+  /** 疑似重复的已生效条目（专家提交时向量查重得出，仅存于候选 meta，供审核页展示）。 */
+  duplicates?: KbDuplicateHint[];
+}
+
+/** 疑似重复条目提示（专家提交查重结果）。 */
+export interface KbDuplicateHint {
+  id: string;
+  /** 标题（片段首行）。 */
+  title: string;
+  /** 内容摘要（截断）。 */
+  summary: string;
+  /** 相似度 0–1（Supabase 余弦；mock 为关键词命中分，见 kb/community.ts 查重）。 */
+  score: number;
 }
 
 export interface KbDocument {
