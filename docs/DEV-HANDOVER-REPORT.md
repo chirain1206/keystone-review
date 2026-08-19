@@ -95,3 +95,42 @@ npm run dev          # 或 npm run build && npm start（本机用 PORT=3100，�
 5. **构建说明**：本沙箱禁止子进程，`npm run build` 的类型检查步骤 spawn EPERM（编译已通过
    "✓ Compiled successfully"）；以 `node node_modules/typescript/bin/tsc --noEmit`（通过，exit 0）
    + 132/132 测试全绿作为类型与回归证据；正常环境请复跑 `npm run build`。
+
+## 六、知识库运维工具使用说明（T20）
+
+> 追加日期：2026-08-19 · 范围：新增 `scripts/kb-manage.mjs` 运维 CLI + store 管理方法
+> （list / updateStatus / deleteByIds），补齐入库脚本"只增改、不淘汰"的缺口。基线 267 用例全绿（现 286 用例）。
+
+入库脚本 `scripts/ingest-kb.mjs` 只"增/改"，本工具补齐"下线/淘汰/物理删除"能力。运行（正常开发环境，经 tsx 加载 TS 模块）：
+
+```bash
+node scripts/kb-manage.mjs <子命令> [选项]
+```
+
+五个子命令：
+
+1. **list** —— 列出库内片段（id 前 8 位 / patch / status / origin / class-spec / 正文前 60 字 / source_url），支持组合过滤：
+   ```bash
+   node scripts/kb-manage.mjs list --patch 12.1 --status active --origin curated --class Mage --limit 20
+   ```
+2. **deprecate** —— 下线（status → deprecated），按 id 前缀（须唯一匹配，歧义/未命中报错）或整补丁批量，可加备注：
+   ```bash
+   node scripts/kb-manage.mjs deprecate 3f2a1c0d --reason "12.2 打法已变更"
+   node scripts/kb-manage.mjs deprecate --all-patch 12.0 --reason "补丁已过时"
+   ```
+3. **reactivate** —— 重新激活（deprecated → active）：
+   ```bash
+   node scripts/kb-manage.mjs reactivate 3f2a1c0d
+   ```
+4. **delete** —— 物理删除（默认 dry-run 只预览，加 `--yes` 才真删），按 id 前缀 / 补丁 / 状态：
+   ```bash
+   node scripts/kb-manage.mjs delete --patch 12.0        # 预览（dry-run）
+   node scripts/kb-manage.mjs delete --patch 12.0 --yes  # 真删
+   node scripts/kb-manage.mjs delete --status deprecated --yes
+   ```
+5. **stats** —— 按补丁 / 状态 / 来源统计：
+   ```bash
+   node scripts/kb-manage.mjs stats
+   ```
+
+说明：环境变量与 ingest 一致（`SUPABASE_*`），仅走存储层、无需嵌入密钥；沙箱内禁止 tsx 子进程，等价逻辑由 `src/lib/kb/kb-manage.test.ts` 覆盖（19 用例，含列表过滤 / 下线激活 / 删除 dry-run 与 --yes / 前缀唯一性）。

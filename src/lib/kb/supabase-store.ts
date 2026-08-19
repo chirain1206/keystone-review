@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { envConfig } from "@/lib/env";
 import type { KbStore } from "@/lib/kb/store";
-import type { KbDocument, KbHit, KbSearchFilters, KbSearchQuery } from "@/lib/kb/types";
+import type { KbDocument, KbHit, KbListFilter, KbListRow, KbMeta, KbSearchFilters, KbSearchQuery } from "@/lib/kb/types";
 import { KB_TOP_K_MAX } from "@/lib/kb/types";
 
 /**
@@ -79,6 +79,55 @@ export class SupabaseKbStore implements KbStore {
       .from("kb_documents")
       .select("*", { count: "exact", head: true });
     return count ?? 0;
+  }
+
+  async list(filter: KbListFilter = {}): Promise<KbListRow[]> {
+    let q = client().from("kb_documents").select("id, chunk_text, meta");
+    if (filter.patch) q = q.eq("meta->>patch", filter.patch);
+    if (filter.status) q = q.eq("meta->>status", filter.status);
+    if (filter.origin) q = q.eq("meta->>origin", filter.origin);
+    if (filter.class) q = q.eq("meta->>class", filter.class);
+    if (filter.idPrefix) q = q.ilike("id::text", `${filter.idPrefix}%`);
+    if (filter.limit && filter.limit > 0) q = q.limit(filter.limit);
+    q = q.order("id", { ascending: true });
+    const { data, error } = await q;
+    if (error) throw new Error(`知识库列表查询失败：${error.message}`);
+    return ((data ?? []) as { id: string; chunk_text: string; meta: KbMeta }[]).map((r) => ({
+      id: r.id,
+      chunkText: r.chunk_text,
+      meta: r.meta,
+    }));
+  }
+
+  async updateStatus(ids: string[], status: KbMeta["status"]): Promise<number> {
+    if (ids.length === 0) return 0;
+    // jsonb 字段无法在 PostgREST 中做部分合并，故先取回 meta 合并 status 后逐条写回。
+    // 运维路径低并发、低批量，N 次往返可接受；避免引入 RPC/迁移扩大改动面。
+    const { data, error } = await client()
+      .from("kb_documents")
+      .select("id, meta")
+      .in("id", ids);
+    if (error) throw new Error(`知识库状态查询失败：${error.message}`);
+    let changed = 0;
+    for (const row of (data ?? []) as { id: string; meta: KbMeta }[]) {
+      const current = row.meta ?? ({} as KbMeta);
+      if (current.status === status) continue; // 已是目标状态 → 跳过
+      const meta = { ...current, status } as unknown as Record<string, unknown>;
+      const { error: ue } = await client()
+        .from("kb_documents")
+        .update({ meta, updated_at: new Date().toISOString() })
+        .eq("id", row.id);
+      if (ue) throw new Error(`知识库状态更新失败：${ue.message}`);
+      changed++;
+    }
+    return changed;
+  }
+
+  async deleteByIds(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const { error } = await client().from("kb_documents").delete().in("id", ids);
+    if (error) throw new Error(`知识库删除失败：${error.message}`);
+    return ids.length;
   }
 }
 

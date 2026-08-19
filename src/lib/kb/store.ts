@@ -1,6 +1,9 @@
 import type {
   KbDocument,
   KbHit,
+  KbListFilter,
+  KbListRow,
+  KbMeta,
   KbSearchFilters,
   KbSearchQuery,
 } from "@/lib/kb/types";
@@ -20,4 +23,13 @@ export interface KbStore {
   /** 库中最新非 general 补丁（ACTIVE_PATCH 未配置时的缺省活跃补丁）。 */
   getActivePatch(): Promise<string | null>;
   count(): Promise<number>;
+  /**
+   * 运维列表（T20）：按 idPrefix/patch/status/origin/class 过滤，limit 截断
+   * （0/undefined = 不限）。返回行不含 embedding（避免搬运大向量）。
+   */
+  list(filter?: KbListFilter): Promise<KbListRow[]>;
+  /** 运维下线/激活（T20）：按 id 批量更新 meta.status，返回实际变更条数（已是目标状态则跳过）。 */
+  updateStatus(ids: string[], status: KbMeta["status"]): Promise<number>;
+  /** 运维物理删除（T20）：按 id 批量删除，返回实际删除条数。 */
+  deleteByIds(ids: string[]): Promise<number>;
 }

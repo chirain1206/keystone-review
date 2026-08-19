@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { KbStore } from "@/lib/kb/store";
-import type { KbDocument, KbHit, KbSearchFilters, KbSearchQuery } from "@/lib/kb/types";
+import type { KbDocument, KbHit, KbListFilter, KbListRow, KbMeta, KbSearchFilters, KbSearchQuery } from "@/lib/kb/types";
 import { KB_TOP_K_MAX } from "@/lib/kb/types";
 
 /**
@@ -44,14 +44,13 @@ async function loadAll(): Promise<KbDocument[]> {
   }
 }
 
-async function saveAll(docs: KbDocument[]): Promise<void> {
-  await withLock(async () => {
-    await fs.mkdir(dataDir(), { recursive: true });
-    const fp = path.join(dataDir(), FILE);
-    const tmp = fp + `.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(docs), "utf8");
-    await fs.rename(tmp, fp);
-  });
+/** 不加锁的落盘（须在 withLock 内调用，保证读-改-写原子）。 */
+async function writeAll(docs: KbDocument[]): Promise<void> {
+  await fs.mkdir(dataDir(), { recursive: true });
+  const fp = path.join(dataDir(), FILE);
+  const tmp = fp + `.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(docs), "utf8");
+  await fs.rename(tmp, fp);
 }
 
 /** 中文双字词 + 英文/数字词 切分。 */
@@ -158,6 +157,62 @@ export class FileKbStore implements KbStore {
 
   async count(): Promise<number> {
     return (await loadAll()).length;
+  }
+
+  async list(filter: KbListFilter = {}): Promise<KbListRow[]> {
+    const docs = await loadAll();
+    const prefix = filter.idPrefix?.toLowerCase();
+    const rows: KbListRow[] = [];
+    for (const d of docs) {
+      const m = d.meta;
+      if (prefix && !d.id.toLowerCase().startsWith(prefix)) continue;
+      if (filter.patch && m.patch !== filter.patch) continue;
+      if (filter.status && m.status !== filter.status) continue;
+      if (filter.origin && m.origin !== filter.origin) continue;
+      if (filter.class && m.class !== filter.class) continue;
+      rows.push({ id: d.id, chunkText: d.chunkText, meta: m });
+    }
+    // 稳定排序：按 id 字典序（uuid 无自然顺序，仅保证输出可复现）
+    rows.sort((a, b) => a.id.localeCompare(b.id));
+    if (filter.limit && filter.limit > 0 && rows.length > filter.limit) {
+      return rows.slice(0, filter.limit);
+    }
+    return rows;
+  }
+
+  async updateStatus(ids: string[], status: KbMeta["status"]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const idSet = new Set(ids);
+    let changed = 0;
+    await withLock(async () => {
+      const docs = await loadAll();
+      for (const d of docs) {
+        if (idSet.has(d.id) && d.meta.status !== status) {
+          d.meta.status = status;
+          changed++;
+        }
+      }
+      await writeAll(docs);
+    });
+    return changed;
+  }
+
+  async deleteByIds(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const idSet = new Set(ids);
+    let removed = 0;
+    await withLock(async () => {
+      const docs = await loadAll();
+      const remaining = docs.filter((d) => {
+        if (idSet.has(d.id)) {
+          removed++;
+          return false;
+        }
+        return true;
+      });
+      await writeAll(remaining);
+    });
+    return removed;
   }
 }
 

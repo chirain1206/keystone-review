@@ -60,4 +60,24 @@ export interface KbSearchQuery {
   vector: number[];
 }
 
+/** 知识库管理列表过滤条件（运维 CLI，T20）。 */
+export interface KbListFilter {
+  /** 按 id 前缀匹配（大小写不敏感；uuid 通常小写）。 */
+  idPrefix?: string;
+  /** 内容版本补丁（如 "12.1"）。 */
+  patch?: string;
+  status?: KbMeta["status"];
+  origin?: KbMeta["origin"];
+  class?: string;
+  /** 返回上限；0/undefined = 不限。 */
+  limit?: number;
+}
+
+/** 知识库管理列表行（运维 CLI 展示用；不含 embedding，避免搬运大向量）。 */
+export interface KbListRow {
+  id: string;
+  chunkText: string;
+  meta: KbMeta;
+}
+
 export const KB_TOP_K_MAX = 5;
