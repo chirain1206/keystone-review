@@ -5,6 +5,7 @@ import {
   buildRecommendationRow,
   formatAmount,
   formatDurationSec,
+  formatFightDate,
   formatKeyPercent,
   formatPercent,
   formatPerformance,
@@ -121,16 +122,20 @@ describe("buildRecommendationRow / buildLevelRange（行渲染）", () => {
     routeSimilarity: 0.6,
     durationSec: 1650,
     success: true,
+    fightStartTimeMs: null as number | null,
+    stale: false,
   };
 
-  it("单行字段：层数/表现/阵容/路线/时长/限时", () => {
+  it("单行字段：层数/表现/阵容/路线/时长/日期/限时", () => {
     expect(buildRecommendationRow(input)).toEqual({
       level: "10",
       performance: { key: "Key % 88", secondary: "Parse % 96 · DPS 12.3k", dps: null },
       comp: "87%",
       route: "60%",
       duration: "27 分 30 秒",
+      date: "—", // 时间未知
       success: true,
+      stale: false,
     });
   });
 
@@ -138,9 +143,49 @@ describe("buildRecommendationRow / buildLevelRange（行渲染）", () => {
     expect(buildRecommendationRow({ ...input, level: null }).level).toBe("—");
   });
 
+  it("较早候选标注 stale 且日期随语言切换", () => {
+    const now = new Date("2026-08-20T12:00:00Z").getTime();
+    const ms = new Date("2026-08-17T12:00:00Z").getTime(); // 3 天前
+    const row = buildRecommendationRow({ ...input, fightStartTimeMs: ms, stale: true }, { lang: "zh", nowMs: now });
+    expect(row.stale).toBe(true);
+    expect(row.date).toBe("3 天前");
+    const rowEn = buildRecommendationRow({ ...input, fightStartTimeMs: ms, stale: true }, { lang: "en", nowMs: now });
+    expect(rowEn.date).toBe("3 days ago");
+  });
+
   it("层数范围：多值去重升序、单值、空", () => {
     expect(buildLevelRange([10, 11, 10, null])).toBe("10–11");
     expect(buildLevelRange([10])).toBe("10");
     expect(buildLevelRange([null, null])).toBe("—");
+  });
+});
+
+describe("formatFightDate（战斗日期，随中/英切换）", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = new Date("2026-08-20T12:00:00Z").getTime();
+
+  it("时间未知 → 「—」", () => {
+    expect(formatFightDate(null, now, "zh")).toBe("—");
+    expect(formatFightDate(Number.NaN, now, "zh")).toBe("—");
+  });
+
+  it("当天 / 昨天 / N 天前（zh）", () => {
+    expect(formatFightDate(now - 2 * 60 * 60 * 1000, now, "zh")).toBe("今天");
+    expect(formatFightDate(now - 1 * DAY, now, "zh")).toBe("昨天");
+    expect(formatFightDate(now - 3 * DAY, now, "zh")).toBe("3 天前");
+  });
+
+  it("en 模式英文格式（当天/昨天/N 天前）", () => {
+    expect(formatFightDate(now - 2 * 60 * 60 * 1000, now, "en")).toBe("Today");
+    expect(formatFightDate(now - 1 * DAY, now, "en")).toBe("Yesterday");
+    expect(formatFightDate(now - 3 * DAY, now, "en")).toBe("3 days ago");
+  });
+
+  it("更早 → 绝对日期（本地时区构造，时区无关）", () => {
+    // 用本地时区构造 2026-07-31 12:00，避免断言依赖运行机器时区
+    const localMs = new Date(2026, 6, 31, 12, 0, 0).getTime();
+    const later = localMs + 20 * DAY;
+    expect(formatFightDate(localMs, later, "zh")).toBe("7 月 31 日");
+    expect(formatFightDate(localMs, later, "en")).toBe("Jul 31");
   });
 });

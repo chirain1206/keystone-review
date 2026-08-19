@@ -337,6 +337,19 @@ table.list th {
   color: var(--text-dim);
   font-size: 13px;
 }
+.rec-date {
+  color: var(--text-dim);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.rec-stale {
+  color: var(--accent);
+  font-size: 12px;
+  border: 1px solid rgba(240, 165, 0, 0.4);
+  border-radius: 999px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
 .rec-link {
   color: var(--accent);
   white-space: nowrap;

@@ -56,6 +56,10 @@ interface Recommendation {
   medal: string | null;
   metricName: string | null;
   url: string;
+  /** 战斗开始的绝对时间（epoch 毫秒）；拿不到时为 null（日期列显示"日期未知"）。 */
+  fightStartTimeMs: number | null;
+  /** true = 较早候选（RECENCY_DAYS 与 MAX_AGE_DAYS 之间），标注"较早（注意职业改动）"。 */
+  stale: boolean;
 }
 
 /**
@@ -484,7 +488,7 @@ export default function HomeUpload() {
                         {buildLevelRange(recommendations.map((c) => c.level))} 层
                       </div>
                       {recommendations.map((c) => {
-                        const row = buildRecommendationRow(c);
+                        const row = buildRecommendationRow(c, { lang });
                         return (
                           <div
                             key={c.code}
@@ -520,6 +524,15 @@ export default function HomeUpload() {
                               <span className="rec-lbl">路线</span> {row.route}
                             </span>
                             <span className="rec-dur">{row.duration}</span>
+                            <span className="rec-date">{row.date}</span>
+                            {row.stale ? (
+                              <span
+                                className="rec-stale"
+                                title="该 log 来自较早版本，可能受职业改动/热修影响"
+                              >
+                                较早（注意职业改动）
+                              </span>
+                            ) : null}
                             <span className={`badge ${c.success ? "badge-ok" : "badge-err"}`}>
                               {c.success ? "限时" : "超时"}
                             </span>

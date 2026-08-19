@@ -1,8 +1,30 @@
 /**
  * 自动对比推荐的前端纯展示工具（无网络依赖，便于单测）。
  * 供 HomeUpload 的"选择对比目标"步骤渲染推荐列表：Key %（该专精玩家表现）、
- * 相似度百分比、时长、WCL 链接，以及"Key % 优先，相似度其次"的排序。
+ * 相似度百分比、时长、战斗日期、WCL 链接，以及"Key % 优先，相似度其次"的排序。
  */
+
+import type { Lang } from "@/lib/i18n";
+
+const EN_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * 战斗日期文案（随界面语言切换）：
+ *  - 时间未知 → "—"；
+ *  - 当天 → "今天" / "Today"；昨天 → "昨天" / "Yesterday"；
+ *  - 7 天内 → "N 天前" / "N days ago"；
+ *  - 更早 → 绝对日期 "M 月 D 日" / "MMM D"（用本地时区）。
+ */
+export function formatFightDate(ms: number | null, nowMs: number, lang: Lang = "zh"): string {
+  if (ms === null || !Number.isFinite(ms)) return "—";
+  const dayMs = 24 * 60 * 60 * 1000;
+  const days = Math.floor((nowMs - ms) / dayMs);
+  if (days <= 0) return lang === "en" ? "Today" : "今天";
+  if (days === 1) return lang === "en" ? "Yesterday" : "昨天";
+  if (days < 7) return lang === "en" ? `${days} days ago` : `${days} 天前`;
+  const d = new Date(ms);
+  return lang === "en" ? `${EN_MONTHS[d.getMonth()]} ${d.getDate()}` : `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
+}
 
 /** 相似度 0–1 → 百分比文案；null → "—"。 */
 export function formatPercent(value: number | null): string {
@@ -125,8 +147,12 @@ export interface RecommendationRow {
   route: string;
   /** 时长文案（如 "27 分 30 秒"）。 */
   duration: string;
+  /** 战斗日期文案（如 "3 天前" / "8 月 15 日" / "Aug 15"；时间未知 → "—"）。 */
+  date: string;
   /** 是否限时。 */
   success: boolean;
+  /** true = 较早候选（14–30 天），需标注"较早（注意职业改动）"。 */
+  stale: boolean;
 }
 
 /** 推荐行输入的极简形状（与 HomeUpload 的 Recommendation 一致，仅取渲染所需字段）。 */
@@ -140,10 +166,17 @@ export interface RecommendationRowInput {
   routeSimilarity: number | null;
   durationSec: number;
   success: boolean;
+  fightStartTimeMs: number | null;
+  stale: boolean;
 }
 
-/** 单行渲染纯函数（层数 | 表现 | 阵容相似 | 路线相似 | 时长 | 限时）。 */
-export function buildRecommendationRow(input: RecommendationRowInput): RecommendationRow {
+/** 单行渲染纯函数（层数 | 表现 | 阵容相似 | 路线相似 | 时长 | 日期 | 限时）。 */
+export function buildRecommendationRow(
+  input: RecommendationRowInput,
+  opts: { lang?: Lang; nowMs?: number } = {},
+): RecommendationRow {
+  const lang = opts.lang ?? "zh";
+  const nowMs = opts.nowMs ?? Date.now();
   return {
     level: input.level !== null && input.level !== undefined ? String(input.level) : "—",
     performance: buildPerformanceCell(
@@ -155,7 +188,9 @@ export function buildRecommendationRow(input: RecommendationRowInput): Recommend
     comp: formatPercent(input.compSimilarity),
     route: formatRouteSimilarity(input.routeSimilarity),
     duration: formatDurationSec(input.durationSec),
+    date: formatFightDate(input.fightStartTimeMs, nowMs, lang),
     success: input.success,
+    stale: input.stale,
   };
 }
 
