@@ -13,8 +13,9 @@ import { shouldShowFightSelector } from "@/lib/wcl/link-preview";
 import {
   formatDurationSec,
   formatPercent,
+  formatPerformance,
   formatRouteSimilarity,
-  sortByCombined,
+  sortRecommendations,
 } from "@/lib/wcl/recommend-format";
 
 /** from-link 预览返回的战斗与角色。 */
@@ -48,6 +49,9 @@ interface Recommendation {
   compSimilarity: number | null;
   routeSimilarity: number | null;
   combined: number | null;
+  parsePercent: number | null;
+  amount: number | null;
+  metricName: string | null;
   url: string;
 }
 
@@ -231,7 +235,7 @@ export default function HomeUpload() {
         return;
       }
       const list = (data.candidates ?? []) as Recommendation[];
-      setRecommendations(sortByCombined(list));
+      setRecommendations(sortRecommendations(list));
       if (list.length === 0) setRecommendNote(data.degradedReason ?? "");
     } catch {
       setRecommendations([]); // 网络失败静默降级
@@ -476,6 +480,7 @@ export default function HomeUpload() {
                           <th></th>
                           <th>副本</th>
                           <th>层数</th>
+                          <th>该专精表现</th>
                           <th>阵容相似</th>
                           <th>路线相似</th>
                           <th>时长</th>
@@ -499,6 +504,7 @@ export default function HomeUpload() {
                             </td>
                             <td>{dungeonDisplayName(c.dungeon)}</td>
                             <td>{c.level ?? "-"}</td>
+                            <td>{formatPerformance(c.parsePercent, c.amount, c.metricName)}</td>
                             <td>{formatPercent(c.compSimilarity)}</td>
                             <td>{formatRouteSimilarity(c.routeSimilarity)}</td>
                             <td>{formatDurationSec(c.durationSec)}</td>

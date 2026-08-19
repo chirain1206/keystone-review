@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatAmount,
   formatDurationSec,
+  formatParse,
   formatPercent,
+  formatPerformance,
   formatRouteSimilarity,
-  sortByCombined,
+  sortRecommendations,
 } from "@/lib/wcl/recommend-format";
 
 /**
- * 自动对比推荐前端纯展示函数验收：相似度百分比、路线"暂无"文案、时长、排序。
+ * 自动对比推荐前端纯展示函数验收：相似度百分比、路线"暂无"文案、时长、
+ * 该专精玩家表现（parse/DPS），以及"表现优先，相似度其次"排序。
  */
 
 describe("formatPercent / formatRouteSimilarity", () => {
@@ -31,23 +35,48 @@ describe("formatDurationSec", () => {
   });
 });
 
-describe("sortByCombined", () => {
-  it("综合分降序，null 排最后，不改动入参", () => {
-    const list = [
-      { id: "a", combined: null },
-      { id: "b", combined: 0.8 },
-      { id: "c", combined: 0.9 },
-    ];
-    const sorted = sortByCombined(list);
-    expect(sorted.map((x) => x.id)).toEqual(["c", "b", "a"]);
-    expect(list.map((x) => x.id)).toEqual(["a", "b", "c"]);
+describe("formatParse / formatAmount / formatPerformance", () => {
+  it("parse 分位 → 「parse 92%」，null → 「—」", () => {
+    expect(formatParse(92.4)).toBe("parse 92%");
+    expect(formatParse(null)).toBe("—");
   });
 
-  it("全 null 时保持相对顺序", () => {
+  it("指标值 → 「DPS 12.3k」，大数缩写，null → 「—」", () => {
+    expect(formatAmount(12_345)).toBe("DPS 12.3k");
+    expect(formatAmount(8_500, "hps")).toBe("HPS 8.5k");
+    expect(formatAmount(9_800)).toBe("DPS 9.8k");
+    expect(formatAmount(null)).toBe("—");
+  });
+
+  it("组合表现文案：有 parse/指标时拼接，皆无 → 「—」", () => {
+    expect(formatPerformance(92, 12_345, "dps")).toBe("parse 92% / DPS 12.3k");
+    expect(formatPerformance(null, 12_345, "dps")).toBe("DPS 12.3k");
+    expect(formatPerformance(92, null, "dps")).toBe("parse 92%");
+    expect(formatPerformance(null, null)).toBe("—");
+  });
+});
+
+describe("sortRecommendations（表现优先，相似度其次）", () => {
+  const item = (
+    id: string,
+    parsePercent: number | null,
+    routeSimilarity: number | null,
+    compSimilarity: number | null,
+  ) => ({ id, parsePercent, routeSimilarity, compSimilarity, combined: null });
+
+  it("主排序 parse 降序，null 排最后，再比路线/阵容", () => {
     const list = [
-      { id: "a", combined: null },
-      { id: "b", combined: null },
+      item("a", 90, 0.8, 0.9),
+      item("b", 95, 0.1, 0.1),
+      item("c", 90, 0.9, 0.5),
+      item("d", null, 0.9, 0.8),
     ];
-    expect(sortByCombined(list).map((x) => x.id)).toEqual(["a", "b"]);
+    expect(sortRecommendations(list).map((x) => x.id)).toEqual(["b", "c", "a", "d"]);
+  });
+
+  it("不改动入参", () => {
+    const list = [item("a", 90, 0.8, 0.9)];
+    sortRecommendations(list);
+    expect(list[0].id).toBe("a");
   });
 });
