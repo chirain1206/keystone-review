@@ -9,28 +9,25 @@ import { compareReference, type ReferenceProfile } from "@/lib/route/recommend";
 import type { RouteFingerprint } from "@/lib/route/fingerprint";
 
 /**
- * WCL 自动对比推荐（FR-3 对比 + FR-12 落地 + 产品补充："表现优先，相似度其次"）。
+ * WCL 自动对比推荐（FR-3 对比 + FR-12 落地 + 产品补充："Key % 优先，相似度其次"）。
  *
- * 用户贴 WCL 链接后，自动搜索"同副本、相近层数、该专精玩家自己打得强"的参考 log：
+ * 候选来源（排行榜）+ 该专精玩家表现（Key % / Parse %）：
  *  1) 候选搜索：worldData.encounter(id).characterRankings（className + specName 必填、
  *     metric=dps（可配 RANKING_METRIC）、bracket=层数-1、leaderboard=LogsOnly、page:1）——
- *     排行榜天然按该专精玩家 DPS 从高到低返回，直接筛出"该专精玩家打得强"的报告；
- *     专精/职业未知时降级为 fightRankings(metric=speed)（团队层数排行，无个体表现）。
- *  2) 候选详情：对每个候选拉 fights（层数/成功/时长/阵容）+ dungeonPulls（路线）+ masterData.actors；
- *  3) 排序：主排序 = 该专精玩家 DPS（amount）降序；次排序 = 路线相似度；再次 = 阵容相似度。
- *
- * 配额保护（对齐 TECH-DESIGN "WCL 只做轻量查询" + 事件模块的既有策略）：
- *  - 候选只取前 N（≤10）；详情并行度 ≤3；单候选失败跳过、部分成功也返回；
- *  - 候选搜索结果进程内缓存（key=dungeon+level+spec，TTL 1 小时）；
- *  - encounter 解析（静态映射零配额）、NPC 名称各有独立缓存；任一环节失败 → 静默降级为空候选。
+ *     按该专精玩家 DPS 从高到低返回候选报告（code + fightID + amount）；
+ *  2) 候选详情：fights（层数/成功/时长/阵容 + dungeonPulls 路线）+ masterData.actors +
+ *     rankings(fightIDs, playerMetric=dps) → 该专精玩家的 bracketPercent(Key %) / rankPercent(Parse %)；
+ *  3) 排序：主排序 = Key % 降序（缺失时 DPS 兜底）；次排序 = 路线相似度；再次 = 阵容相似度。
  *
  * 字段名已真实探测核实（live WCL v2，2026-08）：
- *  - characterRankings 需 className + specName 同时传（只传 specName 报 "Invalid class and spec specified"）；
- *  - 返回非裸数组，而是 { page, hasMorePages, count, rankings: [...] }；
- *  - 排行条目字段：report.code / report.fightID / hardModeLevel(=层数) / bracketData(=层数) /
- *    amount(=DPS) / duration(ms) / score(M+ 分) / medal(gold|silver|bronze|none)；
- *  - **无 historicalPercent（parse 分位）字段**——M+ DPS 榜只有原始 DPS，无 parse 分位；
- *  - bracket 参数 = 层数 - 1（bracket:9 → +10，bracket:10 → +11）。
+ *  - characterRankings 需 className + specName 同传；返回 { page, hasMorePages, count, rankings: [...] }；
+ *  - characterRankings 条目：report.code / report.fightID / hardModeLevel(=层数) / bracketData / amount(=DPS) /
+ *    duration(ms) / score / medal；**无 Key %/Parse %**；
+ *  - Key %（同层数同职业分位）= reportData.report.rankings(fightIDs, playerMetric:dps).data[].roles.{role}
+ *    .characters[].bracketPercent；Parse % = 同处 rankPercent；
+ *  - **dungeonPulls 挂在 ReportFight（fights[]）上，不是 Report**（旧实现误放 Report 导致 GraphQL 报错
+ *    "Cannot query field dungeonPulls on type Report"，候选详情全失败 → 无推荐）；
+ *  - bracket = 层数 - 1（bracket:9 → +10）。
  */
 
 export type WclRegion = "www" | "cn";
@@ -52,7 +49,7 @@ export function rangeLevels(): number {
   return Number.isInteger(n) && n >= 0 ? n : 1;
 }
 
-/** 排行指标（RANKING_METRIC 环境变量，默认 "dps"；治疗可改 "hps"、总评可改 "playerscore"）。 */
+/** 排行指标（RANKING_METRIC 环境变量，默认 "dps"）。 */
 export function rankingMetric(): string {
   const raw = (process.env.RANKING_METRIC ?? "").trim().toLowerCase();
   return raw || "dps";
@@ -60,6 +57,8 @@ export function rankingMetric(): string {
 
 export interface ReferenceRecommendation {
   code: string;
+  /** 该 log 的场次 id（用于 WCL 链接 #fight=N 直达）。 */
+  fightId: number | null;
   dungeon: string;
   level: number | null;
   success: boolean;
@@ -68,15 +67,19 @@ export interface ReferenceRecommendation {
   routeSimilarity: number | null;
   /** 综合分（comp + route 均值；无任何可用维度为 null）。 */
   combined: number | null;
-  /** 该专精玩家表现：排行指标值（metric=dps 时即 DPS）。 */
+  /** Key %（同副本同层数同职业对比分位，0–100）；拿不到时为 null。 */
+  keyPercent: number | null;
+  /** Parse %（全历史解析分位，0–100）；拿不到时为 null。 */
+  parsePercent: number | null;
+  /** 该专精玩家 DPS（Key % 缺失时的兜底排序指标）。 */
   amount: number | null;
-  /** 该专精玩家表现：M+ score（Blizzard 官方分）。 */
+  /** M+ score。 */
   score: number | null;
-  /** 奖牌：gold | silver | bronze | none（拿不到时为 null）。 */
+  /** 奖牌：gold | silver | bronze | none。 */
   medal: string | null;
   /** 排行指标名（如 "dps"）。 */
   metricName: string | null;
-  /** 候选报告 WCL 链接（前端作为对比链接使用）。 */
+  /** 候选报告 WCL 链接（带 #fight=N 直达该场）。 */
   url: string;
 }
 
@@ -90,7 +93,7 @@ export interface ReferenceSearchResult {
 export interface RecommendReferencesInput {
   dungeon: string;
   level: number;
-  /** 所选专精（用于 characterRankings 过滤 + 候选队伍含该专精；空/"Unknown" 则降级）。 */
+  /** 所选专精（characterRankings 过滤 + 候选队伍含该专精 + Key % 提取）。 */
   spec: string;
   /** 所选职业（characterRankings 需 className + specName 同时传）。 */
   playerClass?: string | null;
@@ -113,11 +116,10 @@ export interface RankingsDeps {
 
 interface RankingEntry {
   code: string;
-  fightId?: number | null;
+  fightId: number | null;
   level: number | null;
   durationSec: number;
-  success: boolean;
-  /** 该专精玩家 DPS（metric=dps）或对应指标值。 */
+  /** 该专精玩家 DPS（metric=dps）。 */
   amount: number | null;
   /** M+ score。 */
   score: number | null;
@@ -135,7 +137,6 @@ function asNumber(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-/** 排行 JSON 里的 report code（嵌套在 report.code）。 */
 function extractCode(raw: Record<string, unknown>): string | null {
   for (const k of ["reportID", "reportId", "report_id", "code", "reportCode"]) {
     const v = asString(raw[k]);
@@ -149,7 +150,6 @@ function extractCode(raw: Record<string, unknown>): string | null {
   return null;
 }
 
-/** 排行 JSON 里的 fight id（嵌套在 report.fightID）。 */
 function extractFightId(raw: Record<string, unknown>): number | null {
   for (const k of ["fightID", "fightId", "fight_id", "reportFightID", "reportFightId"]) {
     const v = asNumber(raw[k]);
@@ -165,7 +165,6 @@ function extractFightId(raw: Record<string, unknown>): number | null {
   return null;
 }
 
-/** 排行 JSON 里的层数（hardModeLevel / bracketData，M+ 语境下即 keystone 层数）。 */
 function extractLevel(raw: Record<string, unknown>): number | null {
   for (const k of ["hardModeLevel", "bracketData", "keystoneLevel", "keyLevel", "level"]) {
     const v = asNumber(raw[k]);
@@ -174,7 +173,6 @@ function extractLevel(raw: Record<string, unknown>): number | null {
   return null;
 }
 
-/** 排行 JSON 里的时长（ms 或秒，防御性判断）；失败返回 0。 */
 function extractDurationSec(raw: Record<string, unknown>): number {
   for (const k of ["duration", "keystoneTime", "fightTime", "durationSec"]) {
     const v = asNumber(raw[k]);
@@ -183,7 +181,6 @@ function extractDurationSec(raw: Record<string, unknown>): number {
   return 0;
 }
 
-/** 排行 JSON 里的指标值（DPS 等）。 */
 function extractAmount(raw: Record<string, unknown>): number | null {
   for (const k of ["amount", "total", "dps", "scoreValue", "value"]) {
     const v = asNumber(raw[k]);
@@ -192,20 +189,17 @@ function extractAmount(raw: Record<string, unknown>): number | null {
   return null;
 }
 
-/** 排行 JSON 里的 M+ score。 */
 function extractScore(raw: Record<string, unknown>): number | null {
   const v = asNumber(raw["score"]);
   return v !== null && v >= 0 ? v : null;
 }
 
-/** 排行 JSON 里的奖牌。 */
 function extractMedal(raw: Record<string, unknown>): string | null {
   return asString(raw["medal"]);
 }
 
 /**
  * 解析 characterRankings 返回（兼容 { rankings: [...] } 包裹、{ error }、裸数组三态）。
- * 解析失败/缺 code 的条目被跳过（防御性）。
  */
 export function parseRankingEntries(raw: unknown): RankingEntry[] {
   if (!raw || typeof raw !== "object") return [];
@@ -213,7 +207,7 @@ export function parseRankingEntries(raw: unknown): RankingEntry[] {
     return raw.map(parseEntry).filter((e): e is RankingEntry => e !== null);
   }
   const obj = raw as Record<string, unknown>;
-  if (obj["error"] !== undefined) return []; // 如 "Invalid class and spec specified."
+  if (obj["error"] !== undefined) return [];
   const rankings = obj["rankings"];
   if (Array.isArray(rankings)) {
     return rankings.map(parseEntry).filter((e): e is RankingEntry => e !== null);
@@ -231,12 +225,48 @@ function parseEntry(item: unknown): RankingEntry | null {
     fightId: extractFightId(rec),
     level: extractLevel(rec),
     durationSec: extractDurationSec(rec),
-    success: true, // characterRankings 榜均来自已完成 run；限时与否详情阶段再复核
     amount: extractAmount(rec),
     score: extractScore(rec),
     medal: extractMedal(rec),
     metricName: null,
   };
+}
+
+/**
+ * 从 reportData.report.rankings(...) 返回中提取该专精玩家的 Key %（bracketPercent）与
+ * Parse %（rankPercent）。
+ * 结构：{ data: [{ roles: { tanks/healers/dps: { characters: [{ spec, bracketPercent, rankPercent }] } } }] }。
+ * bracketPercent/rankPercent 为 0 视为"未计算"（返回 null，交由 DPS 兜底）。
+ */
+export function extractSpecPercents(
+  rankingsRaw: unknown,
+  spec: string,
+): { keyPercent: number | null; parsePercent: number | null } {
+  const target = normalizeSpec(spec);
+  if (!target || target === "unknown") return { keyPercent: null, parsePercent: null };
+  const obj = rankingsRaw as Record<string, unknown> | null | undefined;
+  const data = obj?.["data"];
+  if (!Array.isArray(data)) return { keyPercent: null, parsePercent: null };
+  for (const entry of data) {
+    const roles = (entry as Record<string, unknown>)?.["roles"] as Record<string, unknown> | undefined;
+    if (!roles) continue;
+    for (const roleName of ["tanks", "healers", "dps"]) {
+      const characters = (roles[roleName] as Record<string, unknown> | undefined)?.["characters"];
+      if (!Array.isArray(characters)) continue;
+      for (const c of characters) {
+        if (!c || typeof c !== "object") continue;
+        const rec = c as Record<string, unknown>;
+        if (normalizeSpec(asString(rec["spec"]) ?? "") !== target) continue;
+        const kp = asNumber(rec["bracketPercent"]);
+        const pp = asNumber(rec["rankPercent"]);
+        return {
+          keyPercent: kp !== null && kp > 0 ? kp : null,
+          parsePercent: pp !== null && pp > 0 ? pp : null,
+        };
+      }
+    }
+  }
+  return { keyPercent: null, parsePercent: null };
 }
 
 /** 层数范围过滤：[level - range, level + range]。 */
@@ -248,7 +278,7 @@ export function filterByLevelRange(
   const lo = level - range;
   const hi = level + range;
   return entries.filter((e) => {
-    if (e.level === null) return true; // 未知层数保留（详情阶段再按 fight 层数复核）
+    if (e.level === null) return true;
     return e.level >= lo && e.level <= hi;
   });
 }
@@ -270,12 +300,12 @@ export function limitEntries(entries: RankingEntry[], n: number): RankingEntry[]
   return entries.slice(0, n);
 }
 
-/** 该专精玩家表现（DPS/指标值）降序排序（无指标的排最后，保持相对顺序稳定）。 */
+/** 该专精玩家 DPS 降序排序（无指标的排最后）。 */
 export function sortByAmountDesc(entries: RankingEntry[]): RankingEntry[] {
   return [...entries].sort((a, b) => (b.amount ?? -1) - (a.amount ?? -1));
 }
 
-/** 专精名归一化（大小写/空格/连字符不敏感），用于"候选队伍含该专精"过滤。 */
+/** 专精名归一化（大小写/空格/连字符不敏感）。 */
 export function normalizeSpec(spec: string): string {
   return spec.trim().toLowerCase().replace(/[\s\-_']/g, "");
 }
@@ -285,30 +315,31 @@ export function wclSlug(name: string): string {
   return name.trim().replace(/[\s\-_']/g, "");
 }
 
-/**
- * 候选队伍专精过滤：候选阵容（friendlySpecs）含指定专精才保留。
- * spec 为空/"Unknown" 时不过滤（返回 true）。
- */
+/** 候选队伍专精过滤：候选阵容（friendlySpecs）含指定专精才保留。 */
 export function specMatchesTeam(specs: readonly (string | null | undefined)[], spec: string): boolean {
   const target = normalizeSpec(spec);
   if (!target || target === "unknown") return true;
   return specs.some((s) => s != null && normalizeSpec(s) === target);
 }
 
-/** 最终推荐排序的候选形状（表现 + 路线 + 阵容）。 */
+/** 最终推荐排序的候选形状（Key % + DPS + 路线 + 阵容）。 */
 export interface RankableCandidate {
+  keyPercent: number | null;
   amount: number | null;
   routeSimilarity: number | null;
   compSimilarity: number | null;
 }
 
 /**
- * "表现优先，相似度其次"排序：
- *  主排序 = 该专精玩家 DPS（amount）降序（无指标排最后）；次排序 = 路线相似度降序；再次 = 阵容相似度降序。
- * 纯函数，返回新数组，不改动入参。
+ * "Key % 优先，相似度其次"排序：
+ *  主排序 = Key % 降序（无 Key % 排最后）；Key % 缺失/相同时按 DPS 降序兜底；
+ *  次排序 = 路线相似度降序；再次 = 阵容相似度降序。
  */
 export function rankRecommendations<T extends RankableCandidate>(items: readonly T[]): T[] {
   return [...items].sort((a, b) => {
+    const ka = a.keyPercent ?? -1;
+    const kb = b.keyPercent ?? -1;
+    if (ka !== kb) return kb - ka;
     const aa = a.amount ?? -1;
     const ab = b.amount ?? -1;
     if (aa !== ab) return ab - aa;
@@ -321,7 +352,6 @@ export function rankRecommendations<T extends RankableCandidate>(items: readonly
 
 // ---------- GraphQL 查询 ----------
 
-/** 排行榜查询（优先路径）：按职业+专精过滤的个体表现排行（DPS 降序）。 */
 const CHARACTER_RANKINGS_QUERY = `
 query CharacterRankings($encounterId: Int!, $bracket: Int, $className: String, $specName: String, $metric: CharacterRankingMetricType) {
   worldData {
@@ -338,7 +368,6 @@ query CharacterRankings($encounterId: Int!, $bracket: Int, $className: String, $
   }
 }`;
 
-/** 排行榜查询（降级路径）：专精未知时的团队层数排行（无个体表现）。 */
 const FIGHT_RANKINGS_QUERY = `
 query FightRankings($encounterId: Int!, $bracket: Int) {
   worldData {
@@ -353,25 +382,30 @@ query FightRankings($encounterId: Int!, $bracket: Int) {
   }
 }`;
 
+/** 单场战斗的 dungeonPulls（路线）。dungeonPulls 挂在 ReportFight 上（非 Report）。 */
 const PULLS_QUERY = `
-query ReportPulls($code: String!) {
+query ReportFightPulls($code: String!, $fightId: Int) {
   reportData {
     report(code: $code) {
-      dungeonPulls {
+      fights(fightIDs: [$fightId]) {
         id
-        name
-        encounterID
-        kill
-        startTime
-        endTime
-        enemyNPCs { id gameID }
+        dungeonPulls {
+          id
+          name
+          encounterID
+          kill
+          startTime
+          endTime
+          enemyNPCs { id gameID }
+        }
       }
     }
   }
 }`;
 
+/** 候选详情：fights（含 dungeonPulls）+ masterData + rankings（Key %/Parse %）。 */
 const DETAIL_QUERY = `
-query ReportDetail($code: String!) {
+query ReportDetail($code: String!, $fightId: Int) {
   reportData {
     report(code: $code) {
       fights(killType: Kills) {
@@ -385,17 +419,18 @@ query ReportDetail($code: String!) {
         endTime
         friendlyPlayers
         friendlySpecs
+        dungeonPulls {
+          id
+          name
+          encounterID
+          kill
+          startTime
+          endTime
+          enemyNPCs { id gameID }
+        }
       }
       masterData { actors(type: "Player") { id name subType type } }
-      dungeonPulls {
-        id
-        name
-        encounterID
-        kill
-        startTime
-        endTime
-        enemyNPCs { id gameID }
-      }
+      rankings(fightIDs: [$fightId], playerMetric: dps)
     }
   }
 }`;
@@ -414,7 +449,6 @@ interface RawPull {
   enemyNPCs?: RawPullNpc[] | null;
 }
 
-/** 解析 dungeonPulls 原始返回 → DungeonPull[]（enemyNPCs 的 gameID 保留，名称后解析）。 */
 function parseRawPulls(raw: unknown): DungeonPull[] {
   if (!Array.isArray(raw)) return [];
   const out: DungeonPull[] = [];
@@ -435,7 +469,6 @@ function parseRawPulls(raw: unknown): DungeonPull[] {
   return out;
 }
 
-/** 用 gameData.npc 解析 pulls 内 NPC 名称（best-effort，失败保留 null）。 */
 async function fillPullNpcNames(
   region: WclRegion,
   token: string,
@@ -459,20 +492,19 @@ async function fillPullNpcNames(
   return pulls;
 }
 
-/**
- * 单份报告的 dungeonPulls（含 NPC 名解析）。供"用户报告路线指纹"复用：
- * 自动对比推荐需要用户自己的路线（来自用户报告 dungeonPulls）才能算路线相似度。
- */
+/** 单份报告某场战斗的 dungeonPulls（含 NPC 名解析）。供"用户报告路线指纹"复用。 */
 export async function fetchReportPulls(
   region: WclRegion,
   token: string,
   code: string,
+  fightId: number,
   deps: RankingsDeps,
 ): Promise<DungeonPull[]> {
   const { data } = await gqlQuery<{
-    reportData?: { report?: { dungeonPulls?: unknown } | null } | null;
-  }>(region, token, PULLS_QUERY, { code }, deps.fetchFn);
-  const pulls = parseRawPulls(data.reportData?.report?.dungeonPulls);
+    reportData?: { report?: { fights?: { dungeonPulls?: unknown }[] | null } | null } | null;
+  }>(region, token, PULLS_QUERY, { code, fightId }, deps.fetchFn);
+  const fight = data.reportData?.report?.fights?.[0];
+  const pulls = parseRawPulls(fight?.dungeonPulls);
   return fillPullNpcNames(region, token, pulls, deps);
 }
 
@@ -487,9 +519,10 @@ interface RawFight {
   endTime?: number | null;
   friendlyPlayers?: number[] | null;
   friendlySpecs?: string[] | null;
+  dungeonPulls?: unknown;
 }
 
-/** 候选报告详情（阵容 + 路线 + 场次）。 */
+/** 候选报告详情（阵容 + 路线 + Key %/Parse %）。 */
 export interface ReportDetail {
   fights: {
     id: number;
@@ -500,15 +533,19 @@ export interface ReportDetail {
     startTime: number;
     endTime: number;
     friendlySpecs: string[];
+    pulls: DungeonPull[];
   }[];
   players: WclPlayer[];
-  dungeonPulls: DungeonPull[];
+  keyPercent: number | null;
+  parsePercent: number | null;
 }
 
 async function fetchReportDetail(
   region: WclRegion,
   token: string,
   code: string,
+  fightId: number | null,
+  spec: string,
   deps: RankingsDeps,
 ): Promise<ReportDetail> {
   const { data } = await gqlQuery<{
@@ -516,18 +553,17 @@ async function fetchReportDetail(
       report?: {
         fights?: RawFight[] | null;
         masterData?: { actors?: { id?: number | null; name?: string | null; subType?: string | null; type?: string | null }[] | null } | null;
-        dungeonPulls?: unknown;
+        rankings?: unknown;
       } | null;
     } | null;
-  }>(region, token, DETAIL_QUERY, { code }, deps.fetchFn);
+  }>(region, token, DETAIL_QUERY, { code, fightId }, deps.fetchFn);
   const report = data.reportData?.report;
   const fights = (report?.fights ?? []).filter((f) => f.keystoneLevel != null);
   const { players } = buildPlayers(
     report?.masterData?.actors ?? [],
     fights.map((f) => ({ id: f.id, friendlyPlayers: f.friendlyPlayers, friendlySpecs: f.friendlySpecs })),
   );
-  const pulls = parseRawPulls(report?.dungeonPulls);
-  const namedPulls = await fillPullNpcNames(region, token, pulls, deps);
+  const percents = extractSpecPercents(report?.rankings, spec);
   return {
     fights: fights.map((f) => ({
       id: f.id,
@@ -539,19 +575,26 @@ async function fetchReportDetail(
       startTime: f.startTime ?? 0,
       endTime: f.endTime ?? f.startTime ?? 0,
       friendlySpecs: f.friendlySpecs ?? [],
+      pulls: parseRawPulls(f.dungeonPulls),
     })),
     players,
-    dungeonPulls: namedPulls,
+    keyPercent: percents.keyPercent,
+    parsePercent: percents.parsePercent,
   };
 }
 
-/** 从候选详情中挑选"层数范围内"的那场（优先精确层数，其次最近，再其次最高）。 */
+/** 从候选详情中挑选"层数范围内"的那场（优先精确 fightId，其次精确层数，再其次最近）。 */
 function selectCandidateFight(
   fights: ReportDetail["fights"],
+  fightId: number | null,
   level: number,
   range: number,
 ): ReportDetail["fights"][number] | undefined {
   if (fights.length === 0) return undefined;
+  if (fightId !== null) {
+    const byId = fights.find((f) => f.id === fightId);
+    if (byId) return byId;
+  }
   const lo = level - range;
   const hi = level + range;
   const inRange = fights.filter((f) => f.keystoneLevel != null && f.keystoneLevel >= lo && f.keystoneLevel <= hi);
@@ -610,7 +653,6 @@ export function clearSearchCache(): void {
 
 // ---------- 真实候选搜索 ----------
 
-/** 单个层数的排行拉取（专精/职业已知走 characterRankings，未知走 fightRankings）。失败返回空。 */
 async function fetchRankingsBracket(
   region: WclRegion,
   token: string,
@@ -624,8 +666,7 @@ async function fetchRankingsBracket(
   const specSlug = wclSlug(spec);
   const classSlug = playerClass ? wclSlug(playerClass) : "";
   const canCharacter = specSlug !== "" && specSlug !== "unknown" && classSlug !== "" && classSlug !== "unknown";
-  // bracket = 层数 - 1（真实探测核实）
-  const bracket = level - 1;
+  const bracket = level - 1; // bracket = 层数 - 1（真实探测核实）
   try {
     if (canCharacter) {
       const { data } = await gqlQuery<{
@@ -645,7 +686,6 @@ async function fetchRankingsBracket(
   }
 }
 
-/** 按层数范围 [level-range, level+range] 拉取候选（多 bracket 合并，去重，DPS 降序）。 */
 async function searchCandidates(
   region: WclRegion,
   token: string,
@@ -670,7 +710,6 @@ async function searchCandidates(
 
 // ---------- mock ----------
 
-/** mock 路线（3 波 trash + 2 boss），构造候选与用户报告都可用的合成路线。 */
 function mockPulls(seed: number): DungeonPull[] {
   const trash = (i: number, names: string[]) => ({
     id: seed * 100 + i,
@@ -697,7 +736,6 @@ function mockPulls(seed: number): DungeonPull[] {
   ];
 }
 
-/** mock 候选：构造 3 个候选（阵容从相近到差异 + DPS 表现），走与真实一致的相似度/排序代码路径。 */
 function mockRecommendations(input: RecommendReferencesInput): ReferenceRecommendation[] {
   const comps = [
     buildCompProfile([
@@ -727,11 +765,11 @@ function mockRecommendations(input: RecommendReferencesInput): ReferenceRecommen
     dungeonPullsToFingerprint(input.dungeon, mockPulls(2), { runStartMs: 0, durationMs: 500_000 }),
     null,
   ];
-  // DPS 表现故意与相似度错开，验证"表现优先"排序（MOCK3 阵容最不相似但 DPS 最高 → 排第一）
+  // Key % 故意与相似度错开，验证"Key % 优先"排序（MOCK3 Key % 最高但阵容最不相似）
   const metas = [
-    { amount: 11_000, score: 320, medal: "silver", success: true },
-    { amount: 9_800, score: 300, medal: "none", success: true },
-    { amount: 12_345, score: 335, medal: "gold", success: false },
+    { keyPercent: 88, parsePercent: 96, amount: 11_000, score: 320, medal: "silver", success: true },
+    { keyPercent: 72, parsePercent: 85, amount: 9_800, score: 300, medal: "none", success: true },
+    { keyPercent: 95, parsePercent: 99, amount: 12_345, score: 335, medal: "gold", success: false },
   ];
   const user: ReferenceProfile = {
     id: "user",
@@ -742,20 +780,17 @@ function mockRecommendations(input: RecommendReferencesInput): ReferenceRecommen
   };
   const ids = ["MOCK1", "MOCK2", "MOCK3"];
   const items = ids.map((id, i) => {
-    const profile: ReferenceProfile = {
-      id,
-      dungeon: input.dungeon,
-      level: input.level,
-      comp: comps[i],
-      route: routes[i] ?? undefined,
-    };
+    const profile: ReferenceProfile = { id, dungeon: input.dungeon, level: input.level, comp: comps[i], route: routes[i] ?? undefined };
     const cmp = compareReference(user, profile);
     return {
       code: id,
+      fightId: 100 + i,
       dungeon: input.dungeon,
       level: input.level,
       success: metas[i].success,
       durationSec: 500 + i * 30,
+      keyPercent: metas[i].keyPercent,
+      parsePercent: metas[i].parsePercent,
       amount: metas[i].amount,
       score: metas[i].score,
       medal: metas[i].medal,
@@ -767,7 +802,7 @@ function mockRecommendations(input: RecommendReferencesInput): ReferenceRecommen
   });
   return rankRecommendations(items).map((c) => ({
     ...c,
-    url: `https://www.warcraftlogs.com/reports/${c.code}`,
+    url: `https://www.warcraftlogs.com/reports/${c.code}#fight=${c.fightId}`,
   }));
 }
 
@@ -797,7 +832,7 @@ async function mapWithConcurrency<T, R>(
 // ---------- 统一入口 ----------
 
 /**
- * 自动搜索并推荐参考 log（候选搜索 + 详情 + "表现优先，相似度其次"排序）。
+ * 自动搜索并推荐参考 log（候选搜索 + 详情 + "Key % 优先，相似度其次"排序）。
  * 任一环节失败都静默降级（返回 ok:true 但 candidates 为空 + degradedReason），不抛错。
  */
 export async function recommendReferences(
@@ -826,22 +861,9 @@ export async function recommendReferences(
       const token = await getAccessToken(region, deps);
       const encounter = await resolveDungeonEncounter(region, token, input.dungeon, deps);
       if (!encounter) {
-        return {
-          ok: true,
-          candidates: [],
-          degradedReason: "未找到该副本的排行数据",
-        };
+        return { ok: true, candidates: [], degradedReason: "未找到该副本的排行数据" };
       }
-      entries = await searchCandidates(
-        region,
-        token,
-        encounter.encounterId,
-        input.level,
-        input.spec,
-        input.playerClass,
-        range,
-        deps,
-      );
+      entries = await searchCandidates(region, token, encounter.encounterId, input.level, input.spec, input.playerClass, range, deps);
       writeSearchCache(cacheKey, entries);
     } catch (err) {
       if (err instanceof WclGqlError && err.status === 429) {
@@ -855,7 +877,6 @@ export async function recommendReferences(
     return { ok: true, candidates: [], degradedReason: "暂无相近层数的参考 log" };
   }
 
-  // 候选详情（并行 ≤3，失败跳过，部分成功也返回）
   let token: string;
   try {
     token = await getAccessToken(region, deps);
@@ -864,7 +885,7 @@ export async function recommendReferences(
   }
 
   const details = await mapWithConcurrency(entries, RANKING_PARALLELISM, (entry) =>
-    fetchReportDetail(region, token, entry.code, deps),
+    fetchReportDetail(region, token, entry.code, entry.fightId, input.spec, deps),
   );
 
   const user: ReferenceProfile = {
@@ -877,23 +898,33 @@ export async function recommendReferences(
   const profiles: ReferenceProfile[] = [];
   const metas: {
     code: string;
+    fightId: number | null;
     level: number | null;
     success: boolean;
     durationSec: number;
+    keyPercent: number | null;
+    parsePercent: number | null;
     amount: number | null;
     score: number | null;
     medal: string | null;
     metricName: string | null;
   }[] = [];
 
-  details.forEach((detail, i) => {
+  for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
-    if (!detail) return; // 该候选拉取失败，跳过
-    const fight = selectCandidateFight(detail.fights, input.level, range);
-    if (!fight) return;
+    const detail = details[i];
+    if (!detail) continue; // 该候选拉取失败，跳过
+    const fight = selectCandidateFight(detail.fights, entry.fightId, input.level, range);
+    if (!fight) continue;
     // 专精过滤：候选队伍需含所选专精（空/Unknown 不过滤）
-    if (!specMatchesTeam(fight.friendlySpecs, input.spec)) return;
-    const route = dungeonPullsToFingerprint(input.dungeon, detail.dungeonPulls, {
+    if (!specMatchesTeam(fight.friendlySpecs, input.spec)) continue;
+    let namedPulls: DungeonPull[];
+    try {
+      namedPulls = await fillPullNpcNames(region, token, fight.pulls, deps);
+    } catch {
+      namedPulls = fight.pulls;
+    }
+    const route = dungeonPullsToFingerprint(input.dungeon, namedPulls, {
       runStartMs: fight.startTime,
       durationMs: Math.max(1000, fight.durationSec * 1000),
     });
@@ -907,30 +938,36 @@ export async function recommendReferences(
     });
     metas.push({
       code: entry.code,
+      fightId: entry.fightId,
       level: fight.keystoneLevel ?? entry.level ?? input.level,
       success: fight.success,
       durationSec: fight.durationSec,
+      keyPercent: detail.keyPercent,
+      parsePercent: detail.parsePercent,
       amount: entry.amount,
       score: entry.score,
       medal: entry.medal,
       metricName: entry.metricName,
     });
-  });
+  }
 
   if (profiles.length === 0) {
     return { ok: true, candidates: [], degradedReason: "暂无含所选专精的参考 log" };
   }
 
-  // 表现优先，相似度其次（DPS 降序 → 路线相似度降序 → 阵容相似度降序）
+  // Key % 优先，相似度其次
   const ranked = rankRecommendations(
     profiles.map((profile, i) => {
       const cmp = compareReference(user, profile);
       const meta = metas[i];
       return {
         code: profile.id,
+        fightId: meta.fightId,
         level: meta.level,
         success: meta.success,
         durationSec: meta.durationSec,
+        keyPercent: meta.keyPercent,
+        parsePercent: meta.parsePercent,
         amount: meta.amount,
         score: meta.score,
         medal: meta.medal,
@@ -943,6 +980,7 @@ export async function recommendReferences(
   );
   const candidates: ReferenceRecommendation[] = ranked.map((c) => ({
     code: c.code,
+    fightId: c.fightId,
     dungeon: input.dungeon,
     level: c.level ?? input.level,
     success: c.success,
@@ -950,11 +988,13 @@ export async function recommendReferences(
     compSimilarity: c.compSimilarity,
     routeSimilarity: c.routeSimilarity,
     combined: c.combined,
+    keyPercent: c.keyPercent,
+    parsePercent: c.parsePercent,
     amount: c.amount,
     score: c.score,
     medal: c.medal,
     metricName: c.metricName,
-    url: `https://${region === "cn" ? "cn." : "www."}warcraftlogs.com/reports/${c.code}`,
+    url: `https://${region === "cn" ? "cn." : "www."}warcraftlogs.com/reports/${c.code}#fight=${c.fightId ?? ""}`,
   }));
 
   return { ok: true, candidates };

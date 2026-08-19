@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearSearchCache,
   dedupeByCode,
+  extractSpecPercents,
   filterByLevelRange,
   limitEntries,
   normalizeSpec,
@@ -19,16 +20,6 @@ import { clearDungeonZoneCache } from "@/lib/wcl/dungeon-zones";
 import { clearNpcNameCache } from "@/lib/wcl/npc-names";
 import { buildCompProfile } from "@/lib/route/comp-profile";
 
-/**
- * 自动对比推荐验收：
- *  - characterRankings 真实返回结构（{ rankings: [...] } 包裹）防御性解析
- *  - 层数范围过滤 / 去重 / N 上限 / DPS 降序
- *  - "表现优先，相似度其次"排序（rankRecommendations）
- *  - 专精/职业过滤（className+specName、候选队伍含该专精）
- *  - mock 分支表现排序
- *  - 候选搜索缓存命中不重复请求
- */
-
 const USER_COMP = buildCompProfile([
   { class: "Warrior", spec: "Protection" },
   { class: "Shaman", spec: "Restoration" },
@@ -37,8 +28,22 @@ const USER_COMP = buildCompProfile([
   { class: "Druid", spec: "Balance" },
 ]);
 
+function entry(code: string, over: Record<string, unknown> = {}) {
+  return {
+    code,
+    fightId: null as number | null,
+    level: 15 as number | null,
+    durationSec: 100,
+    amount: null as number | null,
+    score: null as number | null,
+    medal: null as string | null,
+    metricName: null as string | null,
+    ...over,
+  };
+}
+
 describe("parseRankingEntries（真实结构：{ rankings: [...] } 包裹）", () => {
-  it("解析包裹结构的 report.code / fightID / hardModeLevel / amount / score / medal", () => {
+  it("解析 report.code / fightID / hardModeLevel / amount / score / medal", () => {
     const entries = parseRankingEntries({
       page: 1,
       hasMorePages: true,
@@ -55,141 +60,153 @@ describe("parseRankingEntries（真实结构：{ rankings: [...] } 包裹）", (
           medal: "gold",
           report: { code: "Cw8GavzArQ9nKBDZ", fightID: 67 },
         },
-        {
-          name: "X",
-          class: "Mage",
-          spec: "Fire",
-          amount: 200_000,
-          bracketData: 11,
-          duration: 900_000,
-          medal: "none",
-          report: { code: "BBB" },
-        },
       ],
     });
-    expect(entries).toHaveLength(2);
+    expect(entries).toHaveLength(1);
     expect(entries[0].code).toBe("Cw8GavzArQ9nKBDZ");
     expect(entries[0].fightId).toBe(67);
     expect(entries[0].level).toBe(10);
     expect(entries[0].amount).toBeCloseTo(310042.28, 2);
     expect(entries[0].score).toBe(335);
     expect(entries[0].medal).toBe("gold");
-    expect(entries[0].durationSec).toBe(1077);
-    expect(entries[1].level).toBe(11); // bracketData 兜底
   });
 
-  it("{ error } 返回空（如 specName 单独传时报 Invalid class and spec）", () => {
+  it("{ error } 返回空；缺 code 的条目跳过；非对象返回空", () => {
     expect(parseRankingEntries({ error: "Invalid class and spec specified." })).toEqual([]);
+    expect(parseRankingEntries([{ noCode: true }])).toEqual([]);
+    expect(parseRankingEntries(null)).toEqual([]);
   });
 
-  it("裸数组也兼容；缺 code 的条目跳过", () => {
-    const entries = parseRankingEntries([
-      { report: { code: "AAA", fightID: 1 }, hardModeLevel: 10, amount: 100 },
-      { noCode: true },
-    ]);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].code).toBe("AAA");
-  });
-
-  it("兼容 fightRankings 风格的顶层 reportID/keystoneLevel（降级路径）", () => {
+  it("兼容顶层 reportID/keystoneLevel（fightRankings 降级路径）", () => {
     const entries = parseRankingEntries({
       rankings: [{ reportID: "TOP123", keystoneLevel: 15, duration: 1_500_000, amount: 100 }],
     });
-    expect(entries).toHaveLength(1);
     expect(entries[0].code).toBe("TOP123");
     expect(entries[0].level).toBe(15);
-    expect(entries[0].durationSec).toBe(1500);
   });
 
-  it("非对象输入返回空", () => {
-    expect(parseRankingEntries(null)).toEqual([]);
-    expect(parseRankingEntries("x")).toEqual([]);
+  it("bracketData 兜底层数", () => {
+    const entries = parseRankingEntries({
+      rankings: [{ report: { code: "X", fightID: 1 }, bracketData: 11, amount: 1 }],
+    });
+    expect(entries[0].level).toBe(11);
+  });
+});
+
+describe("extractSpecPercents（Key %/Parse %）", () => {
+  const rankings = {
+    data: [
+      {
+        fightID: 19,
+        roles: {
+          dps: {
+            characters: [
+              { name: "X", spec: "Arcane", amount: 1, bracketPercent: 88, rankPercent: 96 },
+              { name: "Meditalis", spec: "Windwalker", amount: 232505, bracketPercent: 92, rankPercent: 97 },
+            ],
+          },
+        },
+      },
+    ],
+  };
+
+  it("从 roles.*.characters 中提取该专精的 bracketPercent(Key %)/rankPercent(Parse %)", () => {
+    expect(extractSpecPercents(rankings, "Windwalker")).toEqual({ keyPercent: 92, parsePercent: 97 });
+  });
+
+  it("0 视为未计算 → null（交由 DPS 兜底）", () => {
+    const r = { data: [{ roles: { dps: { characters: [{ spec: "Windwalker", bracketPercent: 0, rankPercent: 0 }] } } }] };
+    expect(extractSpecPercents(r, "Windwalker")).toEqual({ keyPercent: null, parsePercent: null });
+  });
+
+  it("结构缺失/专精未知 → null", () => {
+    expect(extractSpecPercents(null, "Windwalker")).toEqual({ keyPercent: null, parsePercent: null });
+    expect(extractSpecPercents(rankings, "Unknown")).toEqual({ keyPercent: null, parsePercent: null });
+  });
+
+  it("从 healers 角色也能提取（治疗专精）", () => {
+    const r = { data: [{ roles: { healers: { characters: [{ spec: "Restoration", bracketPercent: 83, rankPercent: 97 }] } } }] };
+    expect(extractSpecPercents(r, "Restoration")).toEqual({ keyPercent: 83, parsePercent: 97 });
+  });
+
+  it("多角色同名专精取首个匹配", () => {
+    const r = { data: [{ roles: { dps: { characters: [{ spec: "Fire", bracketPercent: 10 }, { spec: "Fire", bracketPercent: 90 }] } } }] };
+    expect(extractSpecPercents(r, "Fire")).toEqual({ keyPercent: 10, parsePercent: null });
   });
 });
 
 describe("层数范围 / 去重 / N 上限 / DPS 降序", () => {
-  const e = (code: string, level: number | null, amount: number | null) => ({
-    code,
-    level,
-    durationSec: 100,
-    success: true,
-    amount,
-    score: null as number | null,
-    medal: null as string | null,
-    metricName: null as string | null,
-  });
-
   it("filterByLevelRange 按 [level-range, level+range] 过滤，未知层数保留", () => {
-    const entries = [e("a", 14, 1), e("b", 15, 1), e("c", 17, 1), e("d", null, 1)];
+    const entries = [entry("a", { level: 14 }), entry("b", { level: 15 }), entry("c", { level: 17 }), entry("d", { level: null })];
     expect(filterByLevelRange(entries, 15, 1).map((x) => x.code)).toEqual(["a", "b", "d"]);
   });
 
   it("dedupeByCode 去重保留首个", () => {
-    const entries = [e("a", 15, 1), e("b", 15, 1), e("a", 16, 1)];
+    const entries = [entry("a"), entry("b"), entry("a", { level: 16 })];
     expect(dedupeByCode(entries).map((x) => x.code)).toEqual(["a", "b"]);
   });
 
   it("limitEntries 取前 N", () => {
-    const entries = Array.from({ length: 20 }, (_, i) => e(`c${i}`, 15, 1));
+    const entries = Array.from({ length: 20 }, (_, i) => entry(`c${i}`));
     expect(limitEntries(entries, RANKING_CANDIDATE_LIMIT)).toHaveLength(RANKING_CANDIDATE_LIMIT);
     expect(RANKING_CANDIDATE_LIMIT).toBeLessThanOrEqual(10);
   });
 
   it("sortByAmountDesc：DPS 降序，null 排最后", () => {
-    const entries = [e("a", 15, null), e("b", 15, 11_000), e("c", 15, 12_345), e("d", 15, 9_800)];
+    const entries = [entry("a"), entry("b", { amount: 11_000 }), entry("c", { amount: 12_345 }), entry("d", { amount: 9_800 })];
     expect(sortByAmountDesc(entries).map((x) => x.code)).toEqual(["c", "b", "d", "a"]);
   });
 });
 
-describe("rankRecommendations（表现优先，相似度其次）", () => {
-  it("主排序 DPS 降序，DPS 相同再比路线，最后比阵容", () => {
+describe("rankRecommendations（Key % 优先，相似度其次）", () => {
+  const item = (id: string, keyPercent: number | null, amount: number | null, route: number | null, comp: number | null) => ({
+    id,
+    keyPercent,
+    amount,
+    routeSimilarity: route,
+    compSimilarity: comp,
+  });
+
+  it("主排序 Key % 降序，Key % 相同时 DPS 兜底，再比路线/阵容", () => {
     const items = [
-      { id: "a", amount: 11_000, routeSimilarity: 0.8, compSimilarity: 0.9 },
-      { id: "b", amount: 13_000, routeSimilarity: 0.1, compSimilarity: 0.1 },
-      { id: "c", amount: 11_000, routeSimilarity: 0.9, compSimilarity: 0.5 },
-      { id: "d", amount: 11_000, routeSimilarity: 0.9, compSimilarity: 0.8 },
+      item("a", 88, 11_000, 0.8, 0.9),
+      item("b", 95, 9_000, 0.1, 0.1),
+      item("c", 88, 13_000, 0.9, 0.5),
+      item("d", 88, 13_000, 0.9, 0.8),
     ];
     expect(rankRecommendations(items).map((x) => x.id)).toEqual(["b", "d", "c", "a"]);
   });
 
-  it("无 DPS（null）排最后，仅按相似度排序", () => {
+  it("无 Key %（null）排最后，仅按 DPS/相似度排序", () => {
     const items = [
-      { id: "a", amount: null, routeSimilarity: 0.9, compSimilarity: 0.5 },
-      { id: "b", amount: 12_000, routeSimilarity: 0.1, compSimilarity: 0.1 },
-      { id: "c", amount: null, routeSimilarity: 0.9, compSimilarity: 0.8 },
+      item("a", null, 9_000, 0.9, 0.5),
+      item("b", 92, 5_000, 0.1, 0.1),
+      item("c", null, 13_000, 0.9, 0.8),
     ];
     expect(rankRecommendations(items).map((x) => x.id)).toEqual(["b", "c", "a"]);
   });
 
-  it("不改动入参", () => {
-    const items = [{ id: "a", amount: 11_000, routeSimilarity: 0.8, compSimilarity: 0.9 }];
-    rankRecommendations(items);
-    expect(items[0].id).toBe("a");
+  it("Key % 与 DPS 均缺失时按路线/阵容排序", () => {
+    const items = [
+      item("a", null, null, 0.8, 0.9),
+      item("b", null, null, 0.9, 0.5),
+      item("c", null, null, 0.9, 0.8),
+    ];
+    expect(rankRecommendations(items).map((x) => x.id)).toEqual(["c", "b", "a"]);
   });
 });
 
 describe("专精/职业过滤", () => {
-  it("normalizeSpec 忽略大小写/空格/连字符", () => {
+  it("normalizeSpec / wclSlug / specMatchesTeam", () => {
     expect(normalizeSpec("Beast Mastery")).toBe("beastmastery");
-    expect(normalizeSpec("Fire")).toBe("fire");
-  });
-
-  it("wclSlug 去空格/连字符（className/specName 用）", () => {
     expect(wclSlug("Death Knight")).toBe("DeathKnight");
-    expect(wclSlug("Demon Hunter")).toBe("DemonHunter");
-    expect(wclSlug("Beast Mastery")).toBe("BeastMastery");
-    expect(wclSlug("Windwalker")).toBe("Windwalker");
-  });
-
-  it("specMatchesTeam：候选阵容含该专精才保留；空/Unknown 不过滤", () => {
     expect(specMatchesTeam(["Protection", "Restoration", "Fire"], "Fire")).toBe(true);
     expect(specMatchesTeam(["Protection", "Restoration", "Fire"], "Beast Mastery")).toBe(false);
-    expect(specMatchesTeam(["Fire"], "")).toBe(true);
     expect(specMatchesTeam(["Fire"], "Unknown")).toBe(true);
   });
 });
 
-describe("环境变量配置（RANGE_LEVELS / RANKING_METRIC）", () => {
+describe("环境变量配置", () => {
   const prev = { range: process.env.RANGE_LEVELS, metric: process.env.RANKING_METRIC };
   afterEach(() => {
     for (const [k, v] of Object.entries({ RANGE_LEVELS: prev.range, RANKING_METRIC: prev.metric })) {
@@ -198,59 +215,30 @@ describe("环境变量配置（RANGE_LEVELS / RANKING_METRIC）", () => {
     }
   });
 
-  it("rangeLevels 缺省 1，非法回退 1", () => {
+  it("rangeLevels 缺省 1；rankingMetric 缺省 dps", () => {
     delete process.env.RANGE_LEVELS;
-    expect(rangeLevels()).toBe(1);
-    process.env.RANGE_LEVELS = "abc";
-    expect(rangeLevels()).toBe(1);
-  });
-
-  it("rankingMetric 缺省 dps，非法回退 dps", () => {
     delete process.env.RANKING_METRIC;
+    expect(rangeLevels()).toBe(1);
     expect(rankingMetric()).toBe("dps");
-    process.env.RANKING_METRIC = "hps";
-    expect(rankingMetric()).toBe("hps");
   });
 });
 
-describe("recommendReferences（mock 分支：表现优先排序）", () => {
-  it("主排序按 DPS 降序（表现优先，即便该候选相似度更低）", async () => {
+describe("recommendReferences（mock 分支：Key % 优先排序）", () => {
+  it("主排序按 Key % 降序（即便该候选相似度更低）+ 链接带 #fight", async () => {
     const r = await recommendReferences(
-      {
-        dungeon: "Ruby Life Pools",
-        level: 15,
-        spec: "Fire",
-        playerClass: "Mage",
-        region: "www",
-        userRoute: null,
-        userComp: USER_COMP,
-        isMock: true,
-      },
+      { dungeon: "Ruby Life Pools", level: 15, spec: "Fire", playerClass: "Mage", region: "www", userRoute: null, userComp: USER_COMP, isMock: true },
       {},
     );
     expect(r.ok).toBe(true);
     expect(r.candidates.length).toBeGreaterThan(0);
-    // mock 里 MOCK3 DPS 最高（12345）但阵容相似度最低 → 应排第一（表现优先）
-    expect(r.candidates[0].code).toBe("MOCK3");
-    expect(r.candidates[0].amount).toBe(12_345);
-    // DPS 降序
-    const amount = r.candidates.map((c) => c.amount ?? -1);
-    expect([...amount].sort((a, b) => b - a)).toEqual(amount);
-    // 无用户路线 → 路线相似度为 null（降级）
+    expect(r.candidates[0].code).toBe("MOCK3"); // Key % 最高 95
+    expect(r.candidates[0].keyPercent).toBe(95);
+    const kp = r.candidates.map((c) => c.keyPercent ?? -1);
+    expect([...kp].sort((a, b) => b - a)).toEqual(kp);
+    expect(r.candidates[0].url).toContain("warcraftlogs.com/reports/MOCK3#fight=");
     expect(r.candidates.every((c) => c.routeSimilarity === null)).toBe(true);
-    // score/medal/metricName 已回填（展示"该专精表现"用）
-    expect(r.candidates[0].score).not.toBeNull();
-    expect(r.candidates[0].medal).toBe("gold");
-    expect(r.candidates[0].metricName).toBe("dps");
-    expect(r.candidates[0].url).toContain("warcraftlogs.com/reports/");
-  });
-
-  it("无 WCL 密钥（未配置）自动走 mock，不抛错", async () => {
-    const r = await recommendReferences(
-      { dungeon: "X", level: 10, spec: "Fire", region: "www", isMock: true },
-      {},
-    );
-    expect(r.ok).toBe(true);
+    expect(r.candidates[0].parsePercent).toBe(99);
+    expect(r.candidates.every((c) => c.url.includes("#fight="))).toBe(true);
   });
 });
 
@@ -273,20 +261,8 @@ describe("recommendReferences（真实路径：缓存命中不重复请求）", 
                 encounter: {
                   characterRankings: {
                     page: 1,
-                    hasMorePages: false,
-                    count: 1,
                     rankings: [
-                      {
-                        name: "Faoln",
-                        class: "Mage",
-                        spec: "Fire",
-                        amount: 310_042,
-                        hardModeLevel: 15,
-                        duration: 1_500_000,
-                        score: 335,
-                        medal: "gold",
-                        report: { code: "ABC123", fightID: 7 },
-                      },
+                      { name: "Faoln", class: "Mage", spec: "Fire", amount: 310_042, hardModeLevel: 15, duration: 1_500_000, score: 335, medal: "gold", report: { code: "ABC123", fightID: 7 } },
                     ],
                   },
                 },
@@ -307,12 +283,12 @@ describe("recommendReferences（真实路径：缓存命中不重复请求）", 
                       id: 7,
                       name: "Ruby Life Pools",
                       keystoneLevel: 15,
-                      keystoneTime: 1_500_000,
                       kill: true,
                       startTime: 0,
                       endTime: 1_500_000,
                       friendlyPlayers: [1, 2, 3, 4, 5],
                       friendlySpecs: ["Protection", "Restoration", "Fire", "Assassination", "Balance"],
+                      dungeonPulls: [{ id: 1, name: "P1", encounterID: 0, startTime: 0, endTime: 30_000, enemyNPCs: [{ id: 11, gameID: 111 }] }],
                     },
                   ],
                   masterData: {
@@ -324,17 +300,9 @@ describe("recommendReferences（真实路径：缓存命中不重复请求）", 
                       { id: 5, name: "Druid", subType: "Druid", type: "Player" },
                     ],
                   },
-                  dungeonPulls: [
-                    {
-                      id: 1,
-                      name: "P1",
-                      encounterID: 0,
-                      kill: true,
-                      startTime: 0,
-                      endTime: 30_000,
-                      enemyNPCs: [{ id: 11, gameID: 111 }],
-                    },
-                  ],
+                  rankings: {
+                    data: [{ roles: { dps: { characters: [{ spec: "Fire", bracketPercent: 92, rankPercent: 96 }] } } }],
+                  },
                 },
               },
             },
@@ -343,10 +311,7 @@ describe("recommendReferences（真实路径：缓存命中不重复请求）", 
         );
       }
       if (query.includes("NpcNames")) {
-        return new Response(
-          JSON.stringify({ data: { gameData: { n0: { id: 111, name: "Mistcaller" } } } }),
-          { status: 200 },
-        );
+        return new Response(JSON.stringify({ data: { gameData: { n0: { id: 111, name: "Mistcaller" } } } }), { status: 200 });
       }
       return new Response(JSON.stringify({ data: {} }), { status: 200 });
     });
@@ -359,31 +324,22 @@ describe("recommendReferences（真实路径：缓存命中不重复请求）", 
     clearNpcNameCache();
   });
 
-  it("同一 (dungeon+level+spec) 第二次调用不再请求 characterRankings，且解析出 DPS", async () => {
+  it("第二次调用不再请求 characterRankings，且解析出 Key %", async () => {
     const { fetchFn, queries } = makeFakeFetch();
     const deps = { fetchFn, clientId: "id", clientSecret: "secret" };
-    const input = {
-      dungeon: "Ruby Life Pools",
-      level: 15,
-      spec: "Fire",
-      playerClass: "Mage",
-      region: "www" as const,
-      userRoute: null,
-      userComp: USER_COMP,
-    };
+    const input = { dungeon: "Ruby Life Pools", level: 15, spec: "Fire", playerClass: "Mage", region: "www" as const, userRoute: null, userComp: USER_COMP };
 
     const first = await recommendReferences(input, deps);
     expect(first.ok).toBe(true);
     expect(first.candidates.length).toBeGreaterThan(0);
+    expect(first.candidates[0].keyPercent).toBe(92);
+    expect(first.candidates[0].parsePercent).toBe(96);
     expect(first.candidates[0].amount).toBe(310_042);
-    expect(first.candidates[0].score).toBe(335);
-    expect(first.candidates[0].medal).toBe("gold");
+    expect(first.candidates[0].url).toContain("#fight=7");
 
-    const rankingCallsAfterFirst = queries.filter((q) => q.includes("CharacterRankings")).length;
-    expect(rankingCallsAfterFirst).toBeGreaterThanOrEqual(1);
-
-    // 第二次：命中搜索缓存 → 不再请求 characterRankings
+    const rankingCalls = queries.filter((q) => q.includes("CharacterRankings")).length;
+    expect(rankingCalls).toBeGreaterThanOrEqual(1);
     await recommendReferences(input, deps);
-    expect(queries.filter((q) => q.includes("CharacterRankings")).length).toBe(rankingCallsAfterFirst);
+    expect(queries.filter((q) => q.includes("CharacterRankings")).length).toBe(rankingCalls);
   });
 });

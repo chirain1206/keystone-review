@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
   if (!isMock) {
     try {
       const token = await getAccessToken(region);
-      const pulls = await fetchReportPulls(region, token, meta.code, {});
+      const pulls = await fetchReportPulls(region, token, meta.code, fight.id, {});
       userRoute = dungeonPullsToFingerprint(fight.name, pulls, {
         runStartMs: fight.startTime ?? 0,
         durationMs: Math.max(1000, fight.durationSec * 1000),
