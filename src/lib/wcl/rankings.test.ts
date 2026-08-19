@@ -128,50 +128,35 @@ describe("parseBestRank / estimateKeyPercent（Key % 兜底估算）", () => {
   });
 });
 
-describe("extractSpecPercents（Key %/Parse % + 兜底估算）", () => {
-  const rankings = {
-    data: [
-      {
-        fightID: 19,
-        roles: {
-          dps: {
-            characters: [
-              { name: "X", spec: "Arcane", amount: 1, bracketPercent: 88, rankPercent: 96 },
-              { name: "Meditalis", spec: "Windwalker", amount: 232505, bracketPercent: 92, rankPercent: 97 },
-            ],
-          },
-        },
-      },
-    ],
-  };
-
-  it("从 roles.*.characters 中提取该专精的 bracketPercent(Key %)/rankPercent(Parse %)", () => {
-    expect(extractSpecPercents(rankings, "Windwalker")).toEqual({ keyPercent: 92, keyPercentEstimated: false, parsePercent: 97 });
+describe("extractSpecPercents（Key %：best/totalParses 主 + bracketPercent 兜底）", () => {
+  it("best/totalParses 优先估算（playerscore 口径，Lêthê 例）", () => {
+    const r = { data: [{ roles: { dps: { characters: [{ spec: "Windwalker", bracketPercent: 0, best: "~105", totalParses: 958 }] } } }] };
+    expect(extractSpecPercents(r, "Windwalker")).toEqual({ keyPercent: 89, parsePercent: null }); // 100*(1-105/958)≈89
   });
 
-  it("bracketPercent=0 时用 best/totalParses 估算，标记 keyPercentEstimated", () => {
-    const r = { data: [{ roles: { dps: { characters: [{ spec: "Windwalker", bracketPercent: 0, rankPercent: 0, best: "~43", totalParses: 1093 }] } } }] };
-    expect(extractSpecPercents(r, "Windwalker")).toEqual({ keyPercent: 96, keyPercentEstimated: true, parsePercent: null });
+  it("best/totalParses 缺失时回退 bracketPercent（若非 0）", () => {
+    const r = { data: [{ roles: { dps: { characters: [{ spec: "Windwalker", bracketPercent: 92, rankPercent: 97 }] } } }] };
+    expect(extractSpecPercents(r, "Windwalker")).toEqual({ keyPercent: 92, parsePercent: 97 });
   });
 
-  it("bracketPercent=0 且无 best/totalParses → null（交由 DPS 兜底）", () => {
+  it("bracketPercent=0 且无 best/totalParses → null（交 DPS 兜底）", () => {
     const r = { data: [{ roles: { dps: { characters: [{ spec: "Windwalker", bracketPercent: 0, rankPercent: 0 }] } } }] };
-    expect(extractSpecPercents(r, "Windwalker")).toEqual({ keyPercent: null, keyPercentEstimated: false, parsePercent: null });
+    expect(extractSpecPercents(r, "Windwalker")).toEqual({ keyPercent: null, parsePercent: null });
   });
 
   it("结构缺失/专精未知 → null", () => {
-    expect(extractSpecPercents(null, "Windwalker")).toEqual({ keyPercent: null, keyPercentEstimated: false, parsePercent: null });
-    expect(extractSpecPercents(rankings, "Unknown")).toEqual({ keyPercent: null, keyPercentEstimated: false, parsePercent: null });
+    expect(extractSpecPercents(null, "Windwalker")).toEqual({ keyPercent: null, parsePercent: null });
+    expect(extractSpecPercents({ data: [{ roles: { dps: { characters: [{ spec: "Arcane", bracketPercent: 88 }] } } }] }, "Unknown")).toEqual({ keyPercent: null, parsePercent: null });
   });
 
   it("从 healers 角色也能提取（治疗专精）", () => {
-    const r = { data: [{ roles: { healers: { characters: [{ spec: "Restoration", bracketPercent: 83, rankPercent: 97 }] } } }] };
-    expect(extractSpecPercents(r, "Restoration")).toEqual({ keyPercent: 83, keyPercentEstimated: false, parsePercent: 97 });
+    const r = { data: [{ roles: { healers: { characters: [{ spec: "Restoration", best: "~14", totalParses: 495 }] } } }] };
+    expect(extractSpecPercents(r, "Restoration")).toEqual({ keyPercent: 97, parsePercent: null }); // 100*(1-14/495)≈97
   });
 
   it("多角色同名专精取首个匹配", () => {
-    const r = { data: [{ roles: { dps: { characters: [{ spec: "Fire", bracketPercent: 10 }, { spec: "Fire", bracketPercent: 90 }] } } }] };
-    expect(extractSpecPercents(r, "Fire")).toEqual({ keyPercent: 10, keyPercentEstimated: false, parsePercent: null });
+    const r = { data: [{ roles: { dps: { characters: [{ spec: "Fire", best: "~4", totalParses: 75 }, { spec: "Fire", best: "~1", totalParses: 75 }] } } }] };
+    expect(extractSpecPercents(r, "Fire")).toEqual({ keyPercent: 95, parsePercent: null }); // 100*(1-4/75)≈95
   });
 });
 
@@ -400,7 +385,7 @@ describe("recommendReferences（真实路径：缓存命中不重复请求）", 
                     ],
                   },
                   rankings: {
-                    data: [{ roles: { dps: { characters: [{ spec: "Fire", bracketPercent: 92, rankPercent: 96 }] } } }],
+                    data: [{ roles: { dps: { characters: [{ spec: "Fire", best: "~105", totalParses: 958, rankPercent: 96 }] } } }],
                   },
                 },
               },
@@ -431,7 +416,7 @@ describe("recommendReferences（真实路径：缓存命中不重复请求）", 
     const first = await recommendReferences(input, deps);
     expect(first.ok).toBe(true);
     expect(first.candidates.length).toBeGreaterThan(0);
-    expect(first.candidates[0].keyPercent).toBe(92);
+    expect(first.candidates[0].keyPercent).toBe(89); // best ~105 / totalParses 958
     expect(first.candidates[0].parsePercent).toBe(96);
     expect(first.candidates[0].amount).toBe(310_042);
     expect(first.candidates[0].url).toContain("#fight=7");

@@ -57,10 +57,10 @@ export function formatAmount(amount: number | null, metricName?: string | null):
   return `${label} ${abbreviate(amount)}`;
 }
 
-/** Key % → "Key % 88"；估算值加 "~" 前缀（"Key % ~50"）；null/0（未计算）→ "Key % —"。 */
-export function formatKeyPercent(value: number | null, estimated = false): string {
+/** Key % → "Key % 88"；null/0（未计算）→ "Key % —"。 */
+export function formatKeyPercent(value: number | null): string {
   if (value === null || Number.isNaN(value) || value <= 0) return "Key % —";
-  return `Key % ${estimated ? "~" : ""}${Math.round(value)}`;
+  return `Key % ${Math.round(value)}`;
 }
 
 /**
@@ -101,18 +101,17 @@ export interface PerformanceCell {
   dps: string | null;
 }
 
-/** 表现列压缩格式化（纯函数，便于单测）。estimated=true 时 Key % 加 "~" 前缀。 */
+/** 表现列压缩格式化（纯函数，便于单测）。 */
 export function buildPerformanceCell(
   keyPercent: number | null,
   amount: number | null,
   metricName?: string | null,
-  estimated = false,
 ): PerformanceCell {
   const hasKey = keyPercent !== null && !Number.isNaN(keyPercent) && keyPercent > 0;
   if (hasKey) {
     const a = formatAmount(amount, metricName);
     return {
-      key: `Key % ${estimated ? "~" : ""}${Math.round(keyPercent)}`,
+      key: `Key % ${Math.round(keyPercent)}`,
       secondary: a === "—" ? null : a,
       dps: null,
     };
@@ -145,7 +144,6 @@ export interface RecommendationRow {
 export interface RecommendationRowInput {
   level: number | null;
   keyPercent: number | null;
-  keyPercentEstimated: boolean;
   amount: number | null;
   metricName: string | null;
   compSimilarity: number | null;
@@ -165,7 +163,7 @@ export function buildRecommendationRow(
   const nowMs = opts.nowMs ?? Date.now();
   return {
     level: input.level !== null && input.level !== undefined ? String(input.level) : "—",
-    performance: buildPerformanceCell(input.keyPercent, input.amount, input.metricName, input.keyPercentEstimated),
+    performance: buildPerformanceCell(input.keyPercent, input.amount, input.metricName),
     comp: formatPercent(input.compSimilarity),
     route: formatRouteSimilarity(input.routeSimilarity),
     duration: formatDurationSec(input.durationSec),

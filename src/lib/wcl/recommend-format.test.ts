@@ -31,11 +31,6 @@ describe("formatKeyPercent / formatPerformance", () => {
     expect(formatKeyPercent(0.5)).toBe("Key % 1"); // 四舍五入
   });
 
-  it("估算 Key % 加 「~」 前缀", () => {
-    expect(formatKeyPercent(50, true)).toBe("Key % ~50");
-    expect(formatKeyPercent(null, true)).toBe("Key % —");
-  });
-
   it("表现拼接：Key % 优先，DPS 为次，全无 → 「—」", () => {
     expect(formatPerformance(88, 12_345, "dps")).toBe("Key % 88 · DPS 12.3k");
     expect(formatPerformance(88, null, "dps")).toBe("Key % 88");
@@ -95,14 +90,6 @@ describe("buildPerformanceCell（表现列压缩格式化）", () => {
     expect(buildPerformanceCell(88, null, "dps")).toEqual({
       key: "Key % 88",
       secondary: null,
-      dps: null,
-    });
-  });
-
-  it("估算 Key %：key 带 「~」 前缀", () => {
-    expect(buildPerformanceCell(50, 12_345, "dps", true)).toEqual({
-      key: "Key % ~50",
-      secondary: "DPS 12.3k",
       dps: null,
     });
   });

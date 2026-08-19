@@ -16,15 +16,17 @@ import type { RouteFingerprint } from "@/lib/route/fingerprint";
  *     metric=dps（可配 RANKING_METRIC）、bracket=层数-1、leaderboard=LogsOnly、page:1）——
  *     按该专精玩家 DPS 从高到低返回候选报告（code + fightID + amount）；
  *  2) 候选详情：fights（层数/成功/时长/阵容 + dungeonPulls 路线）+ masterData.actors +
- *     rankings(fightIDs, playerMetric=dps) → 该专精玩家的 bracketPercent(Key %) / rankPercent(Parse %)；
+ *     rankings(fightIDs, playerMetric=playerscore) → 该专精玩家的 Key %（best/totalParses 估算，bracketPercent 兜底）；
  *  3) 排序：主排序 = Key % 降序（缺失时 DPS 兜底）；次排序 = 路线相似度；再次 = 阵容相似度。
  *
  * 字段名已真实探测核实（live WCL v2，2026-08）：
  *  - characterRankings 需 className + specName 同传；返回 { page, hasMorePages, count, rankings: [...] }；
  *  - characterRankings 条目：report.code / report.fightID / hardModeLevel(=层数) / bracketData / amount(=DPS) /
  *    duration(ms) / score / medal；**无 Key %/Parse %**；
- *  - Key %（同层数同职业分位）= reportData.report.rankings(fightIDs, playerMetric:dps).data[].roles.{role}
- *    .characters[].bracketPercent；Parse % = 同处 rankPercent；
+ *  - **Key % 正确口径 = reportData.report.rankings(fightIDs, playerMetric:playerscore)**（dps 口径的 bracketPercent 恒为 0 无效）：
+ *    data[].roles.{role}.characters[].best（历史最佳名次，可带 ~ 前缀）与 totalParses（样本总数）估算
+ *    Key % = round(100*(1-best/totalParses))，best/totalParses 缺失时用同口径 bracketPercent（若非 0）；
+ *  - DPS（amount）仍从 characterRankings(metric=dps) 取（playerscore 的 amount 是 M+ 分数，不是伤害）；
  *  - **dungeonPulls 挂在 ReportFight（fights[]）上，不是 Report**（旧实现误放 Report 导致 GraphQL 报错
  *    "Cannot query field dungeonPulls on type Report"，候选详情全失败 → 无推荐）；
  *  - bracket = 层数 - 1（bracket:9 → +10）。
@@ -97,8 +99,6 @@ export interface ReferenceRecommendation {
   combined: number | null;
   /** Key %（同副本同层数同职业对比分位，0–100）；拿不到时为 null。 */
   keyPercent: number | null;
-  /** true = Key % 为估算值（bracketPercent 缺失/0 时由 best/totalParses 估算），展示加 "~" 前缀。 */
-  keyPercentEstimated: boolean;
   /** Parse %（全历史解析分位，0–100）；拿不到时为 null。 */
   parsePercent: number | null;
   /** 该专精玩家 DPS（Key % 缺失时的兜底排序指标）。 */
@@ -291,16 +291,18 @@ export function estimateKeyPercent(best: unknown, totalParses: unknown): number 
 }
 
 /**
- * 从 reportData.report.rankings(...) 返回中提取该专精玩家的 Key %（bracketPercent）与
- * Parse %（rankPercent）。
- * 结构：{ data: [{ roles: { tanks/healers/dps: { characters: [{ spec, bracketPercent, rankPercent }] } } }] }。
- * bracketPercent 缺失/为 0 时，用 best（去掉 ~ 前缀）与 totalParses 估算 Key %（标记 keyPercentEstimated）。
+ * 从 reportData.report.rankings(fightIDs, playerMetric:playerscore) 返回中提取该专精玩家的 Key %。
+ * 结构：{ data: [{ roles: { tanks/healers/dps: { characters: [{ spec, best, totalParses, bracketPercent }] } } }] }。
+ * Key % 口径（真实探测核实，dps 口径 bracketPercent 恒 0 无效）：
+ *  1) 主：best（去掉 ~ 前缀）与 totalParses 估算 round(100*(1-bestRank/totalParses))；
+ *  2) 兜底：该口径 bracketPercent（若非 0）；
+ *  3) 仍无 → null（交由 DPS 兜底）。
  */
 export function extractSpecPercents(
   rankingsRaw: unknown,
   spec: string,
-): { keyPercent: number | null; keyPercentEstimated: boolean; parsePercent: number | null } {
-  const empty = { keyPercent: null, keyPercentEstimated: false, parsePercent: null };
+): { keyPercent: number | null; parsePercent: number | null } {
+  const empty = { keyPercent: null, parsePercent: null };
   const target = normalizeSpec(spec);
   if (!target || target === "unknown") return empty;
   const obj = rankingsRaw as Record<string, unknown> | null | undefined;
@@ -319,14 +321,16 @@ export function extractSpecPercents(
         const kp = asNumber(rec["bracketPercent"]);
         const pp = asNumber(rec["rankPercent"]);
         const parsePercent = pp !== null && pp > 0 ? pp : null;
-        if (kp !== null && kp > 0) {
-          return { keyPercent: kp, keyPercentEstimated: false, parsePercent };
-        }
-        // 兜底：bracketPercent 缺失/0 → 用 best + totalParses 估算
+        // 主：best + totalParses 估算（playerscore 口径）
         const estimated = estimateKeyPercent(rec["best"], rec["totalParses"]);
-        return estimated !== null
-          ? { keyPercent: estimated, keyPercentEstimated: true, parsePercent }
-          : { keyPercent: null, keyPercentEstimated: false, parsePercent };
+        if (estimated !== null) {
+          return { keyPercent: estimated, parsePercent };
+        }
+        // 兜底：同口径 bracketPercent（若非 0）
+        if (kp !== null && kp > 0) {
+          return { keyPercent: kp, parsePercent };
+        }
+        return empty;
       }
     }
   }
@@ -542,7 +546,7 @@ query ReportDetail($code: String!, $fightId: Int) {
         }
       }
       masterData { actors(type: "Player") { id name subType type } }
-      rankings(fightIDs: [$fightId], playerMetric: dps)
+      rankings(fightIDs: [$fightId], playerMetric: playerscore)
     }
   }
 }`;
@@ -652,7 +656,6 @@ export interface ReportDetail {
   }[];
   players: WclPlayer[];
   keyPercent: number | null;
-  keyPercentEstimated: boolean;
   parsePercent: number | null;
 }
 
@@ -699,7 +702,6 @@ async function fetchReportDetail(
     })),
     players,
     keyPercent: percents.keyPercent,
-    keyPercentEstimated: percents.keyPercentEstimated,
     parsePercent: percents.parsePercent,
   };
 }
@@ -911,7 +913,6 @@ function mockRecommendations(input: RecommendReferencesInput): ReferenceRecommen
       success: metas[i].success,
       durationSec: 500 + i * 30,
       keyPercent: metas[i].keyPercent,
-      keyPercentEstimated: false,
       parsePercent: metas[i].parsePercent,
       amount: metas[i].amount,
       score: metas[i].score,
@@ -1028,7 +1029,6 @@ export async function recommendReferences(
     success: boolean;
     durationSec: number;
     keyPercent: number | null;
-    keyPercentEstimated: boolean;
     parsePercent: number | null;
     amount: number | null;
     score: number | null;
@@ -1070,7 +1070,6 @@ export async function recommendReferences(
       success: fight.success,
       durationSec: fight.durationSec,
       keyPercent: detail.keyPercent,
-      keyPercentEstimated: detail.keyPercentEstimated,
       parsePercent: detail.parsePercent,
       amount: entry.amount,
       score: entry.score,
@@ -1096,7 +1095,6 @@ export async function recommendReferences(
         success: meta.success,
         durationSec: meta.durationSec,
         keyPercent: meta.keyPercent,
-        keyPercentEstimated: meta.keyPercentEstimated,
         parsePercent: meta.parsePercent,
         amount: meta.amount,
         score: meta.score,
@@ -1126,7 +1124,6 @@ export async function recommendReferences(
     routeSimilarity: c.routeSimilarity,
     combined: c.combined,
     keyPercent: c.keyPercent,
-    keyPercentEstimated: c.keyPercentEstimated,
     parsePercent: c.parsePercent,
     amount: c.amount,
     score: c.score,
