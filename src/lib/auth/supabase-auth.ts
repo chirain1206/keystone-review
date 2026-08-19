@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createServerClient } from "@supabase/ssr";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type VerifyOtpParams } from "@supabase/supabase-js";
 import type { NextRequest, NextResponse } from "next/server";
 import { envConfig } from "@/lib/env";
 import type { AuthProvider, AuthUser } from "@/lib/auth/types";
@@ -147,6 +147,46 @@ export class SupabaseAuthProvider implements AuthProvider {
     return {
       ok: true,
       user: { id: data.user.id, email: data.user.email ?? email },
+    };
+  }
+
+  /**
+   * 邮箱魔法链接登录（FR-7 增强）：生产 Supabase 对新用户首次登录发送的是
+   * sign-in 链接（而非 6 位验证码），用户点击后带 ?token_hash=... 回到站点。
+   * 这里用 verifyOtp({ type: "email", token_hash }) 完成会话建立（cookie 由
+   * createServerClient 桥接写入 res）。
+   *
+   * 优先 token_hash 验证；email 仅作兼容提示（老版本 gotrue 若要求 email 时
+   * 一并带上，运行时 token_hash 优先、email 无害）。resend 模式发送的是
+   * 6 位验证码（无魔法链接），token_hash 不可验证 → 直接判失效。
+   */
+  async verifyLink(
+    tokenHash: string,
+    email?: string,
+  ): Promise<{ ok: boolean; user?: AuthUser; error?: string }> {
+    if (this.emailMode === "resend") {
+      return { ok: false, error: "链接已失效，请重新登录" };
+    }
+
+    const params: { type: "email"; token_hash: string; email?: string } = {
+      type: "email",
+      token_hash: tokenHash,
+    };
+    if (email) params.email = email;
+
+    const { data, error } = await this.client().auth.verifyOtp(params as VerifyOtpParams);
+    if (error || !data.user) {
+      return { ok: false, error: "链接已失效，请重新登录" };
+    }
+
+    await getRepo().upsertProfile({
+      id: data.user.id,
+      email: data.user.email ?? email ?? "",
+      timezone: "Asia/Shanghai",
+    });
+    return {
+      ok: true,
+      user: { id: data.user.id, email: data.user.email ?? email ?? "" },
     };
   }
 

@@ -96,6 +96,14 @@ export class MockAuthProvider implements AuthProvider {
     return { ok: true, user };
   }
 
+  async verifyLink(
+    _tokenHash: string,
+    _email?: string,
+  ): Promise<{ ok: boolean; user?: AuthUser; error?: string }> {
+    // mock 模式发送 6 位验证码（无魔法链接），token_hash 无对应凭据可验证
+    return { ok: false, error: "链接已失效，请重新登录" };
+  }
+
   async getSession(): Promise<AuthUser | null> {
     const token = this.cookies.get(SESSION_COOKIE);
     if (!token) return null;

@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTurnstile } from "@/lib/client/useTurnstile";
+import { parseMagicLinkToken, readLastEmail, writeLastEmail } from "@/lib/auth/magic-link";
 
 /**
  * 登录页（T12，FR-7）：邮箱 + 验证码（无密码）。
@@ -17,9 +18,51 @@ export default function LoginForm() {
   const [error, setError] = useState("");
   const [mockHint, setMockHint] = useState("");
   const [countdown, setCountdown] = useState(0);
+  const [linkBusy, setLinkBusy] = useState(false);
+  // 防止 React 严格模式/重复渲染导致魔法链接 token_hash（一次性）被重复提交
+  const linkAttempted = useRef(false);
 
   // 可见的 managed widget：用户能看到并可交互（若有挑战可点击），token 由 callback 存储
   const { containerRef, getToken, configured } = useTurnstile("login", "managed");
+
+  // 魔法链接自动登录：生产 Supabase 对新用户首次登录发 sign-in 链接，
+  // 用户点击后带 ?token_hash=...（老形式 ?code=...）回到本页 → 直接建立会话。
+  useEffect(() => {
+    if (linkAttempted.current) return;
+    const tokenHash = parseMagicLinkToken(window.location.search);
+    if (!tokenHash) return;
+    linkAttempted.current = true;
+    setLinkBusy(true);
+    setBusy(true);
+
+    const lastEmail = readLastEmail();
+    const body: { tokenHash: string; email?: string } = { tokenHash };
+    if (lastEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lastEmail)) {
+      body.email = lastEmail;
+    }
+
+    void (async () => {
+      try {
+        const res = await fetch("/api/auth/verify-link", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          setError(data.error ?? "链接已失效，请重新登录");
+          return;
+        }
+        router.push("/");
+        router.refresh();
+      } catch {
+        setError("网络错误，请稍后重试");
+      } finally {
+        setBusy(false);
+        setLinkBusy(false);
+      }
+    })();
+  }, [router]);
 
   const requestCode = async () => {
     setError("");
@@ -27,6 +70,8 @@ export default function LoginForm() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       return setError("请输入有效的邮箱地址");
     }
+    // 记住最近邮箱：魔法链接登录时一并带上（兼容 verifyOtp 需要 email 的情况）
+    writeLastEmail(email.trim());
     setBusy(true);
     try {
       const turnstileToken = await getToken();
@@ -78,6 +123,7 @@ export default function LoginForm() {
         </p>
 
         {error && <div className="alert alert-error">{error}</div>}
+        {linkBusy && <div className="alert alert-info">正在登录…</div>}
         {mockHint && <div className="alert alert-info">{mockHint}</div>}
 
         <div className="login-form">
@@ -92,7 +138,7 @@ export default function LoginForm() {
               placeholder="you@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              disabled={step === "code"}
+              disabled={step === "code" || linkBusy}
             />
           </div>
 
