@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth/provider";
 import { getRepo } from "@/lib/db";
 import { getWclReportMeta, parseWclUrl, selectFight, type WclFight } from "@/lib/wcl/adapter";
-import { preselectPlayerId, type WclPlayer } from "@/lib/wcl/players";
+import { filterPlayersByFight, preselectPlayerId, type WclPlayer } from "@/lib/wcl/players";
 import type { ProcessedLog } from "@/lib/parser/schema";
 import { estimateProcessedLogTokens } from "@/lib/ai/tokens";
 import { enforceCreateLimits } from "@/lib/quota/enforce";
@@ -56,6 +56,8 @@ export async function POST(req: NextRequest) {
   }
   const isMock = metaResult.meta.isMock === true;
   const players = metaResult.meta.players;
+  // 复盘对象按所选场次过滤：该场实际参与的玩家（而非整份报告的玩家列表）
+  const fightPlayers = filterPlayersByFight(players, fight.friendlyPlayers);
 
   // ---------- 预览模式：返回战斗 + 角色列表（不扣每日额度） ----------
   if (playerId === undefined) {
@@ -75,10 +77,11 @@ export async function POST(req: NextRequest) {
         durationSec: f.durationSec,
         affixes: f.affixes,
         selected: f.selected === true,
+        playerIds: f.friendlyPlayers ?? null,
       })),
       players,
       selectedFightId: fight.id,
-      selectedPlayerId: preselectPlayerId(players, metaResult.meta.uploaderName),
+      selectedPlayerId: preselectPlayerId(fightPlayers, metaResult.meta.uploaderName),
       compareDegraded: false,
     });
   }
@@ -87,7 +90,7 @@ export async function POST(req: NextRequest) {
   const limited = await enforceCreateLimits(req, user.id, turnstileToken);
   if (limited) return limited;
 
-  const player = players.find((p) => p.id === playerId);
+  const player = fightPlayers.find((p) => p.id === playerId);
   if (!player) {
     return NextResponse.json({ ok: false, error: "请选择有效的复盘对象" }, { status: 400 });
   }
@@ -129,19 +132,19 @@ export async function POST(req: NextRequest) {
       isMock,
     });
     if (eventsRes.events.length === 0) {
-      log = metadataOnlyLog(fight, player, players);
+      log = metadataOnlyLog(fight, player, fightPlayers);
       dataInsufficient = true;
     } else {
       log = buildProcessedLogFromWcl({
         fight,
         player,
-        players,
+        players: fightPlayers,
         events: eventsRes.events,
         truncated: eventsRes.truncated,
       });
     }
   } catch {
-    log = metadataOnlyLog(fight, player, players);
+    log = metadataOnlyLog(fight, player, fightPlayers);
     dataInsufficient = true;
   }
 

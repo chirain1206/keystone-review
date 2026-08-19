@@ -156,6 +156,27 @@ export function preselectPlayerId(
   return players[0].id;
 }
 
+/**
+ * 按某场战斗的参与者过滤出该场实际参与的玩家（复盘对象候选）。
+ *
+ * 依据：WCL v2 GraphQL Fight.friendlyPlayers 返回该场战斗的玩家 actor id 列表
+ * （与 friendlySpecs 一一对应；已用真实报告探测确认，见完成回报"字段核实结论"）。
+ * 一份报告可能含多场大秘境、每场参与玩家不同——全报告玩家列表会混入其他场次的队员，
+ * 故复盘对象必须按所选场次过滤。
+ *
+ * 拿不到 fight 级玩家信息（字段缺失/为空）或过滤结果为空时，回退整份报告玩家列表，
+ * 保证在旧报告/异常数据下仍可用（不阻塞流程）。
+ */
+export function filterPlayersByFight<T extends { id: number }>(
+  players: T[],
+  friendlyPlayers?: number[] | null,
+): T[] {
+  if (!friendlyPlayers || friendlyPlayers.length === 0) return players;
+  const ids = new Set(friendlyPlayers);
+  const filtered = players.filter((p) => ids.has(p.id));
+  return filtered.length > 0 ? filtered : players;
+}
+
 /** mock：固定 5 人小队（无 WCL 密钥时的演示数据），DemoMage 标记为上传者。 */
 export function mockPlayers(): WclPlayer[] {
   return [

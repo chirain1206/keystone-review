@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPlayers,
+  filterPlayersByFight,
   mockPlayers,
   preselectPlayerId,
   specToRole,
@@ -61,6 +62,37 @@ describe("buildPlayers（角色列表返回）", () => {
     const { players, uploaderName } = buildPlayers(actors, fights, "Nobody");
     expect(players.some((p) => p.isUploader)).toBe(false);
     expect(uploaderName).toBeUndefined();
+  });
+});
+
+describe("filterPlayersByFight（复盘对象按所选场次过滤）", () => {
+  // 一份报告多场大秘境、每场参与玩家不同（FR 本地验收：多场报告返回各自玩家）
+  const reportPlayers: WclPlayer[] = [
+    { id: 1, name: "Tanky", class: "Warrior", spec: "Protection", role: "tank" },
+    { id: 2, name: "Healy", class: "Shaman", spec: "Restoration", role: "healer" },
+    { id: 3, name: "Magey", class: "Mage", spec: "Fire", role: "dps", isUploader: true },
+    { id: 4, name: "Roguey", class: "Rogue", spec: "Assassination", role: "dps" },
+    { id: 5, name: "Druidy", class: "Druid", spec: "Balance", role: "dps" },
+  ];
+
+  it("多场报告：各场次只返回该场实际参与的玩家", () => {
+    const fightA = filterPlayersByFight(reportPlayers, [1, 2, 3]);
+    const fightB = filterPlayersByFight(reportPlayers, [3, 4, 5]);
+    expect(fightA.map((p) => p.id)).toEqual([1, 2, 3]);
+    expect(fightB.map((p) => p.id)).toEqual([3, 4, 5]);
+    expect(fightA.map((p) => p.name)).toEqual(["Tanky", "Healy", "Magey"]);
+    expect(fightB.map((p) => p.name)).toEqual(["Magey", "Roguey", "Druidy"]);
+  });
+
+  it("无 fight 级玩家信息（缺失/空数组）时回退整份报告玩家列表", () => {
+    expect(filterPlayersByFight(reportPlayers, undefined)).toEqual(reportPlayers);
+    expect(filterPlayersByFight(reportPlayers, null)).toEqual(reportPlayers);
+    expect(filterPlayersByFight(reportPlayers, [])).toEqual(reportPlayers);
+  });
+
+  it("过滤结果为空时兜底回退整份报告玩家列表（防空列表）", () => {
+    // friendlyPlayers 含未知 id（异常数据）时不应返回空列表阻塞流程
+    expect(filterPlayersByFight(reportPlayers, [999, 998])).toEqual(reportPlayers);
   });
 });
 
