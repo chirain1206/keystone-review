@@ -99,7 +99,11 @@ export class SupabaseKbStore implements KbStore {
     }));
   }
 
-  async updateStatus(ids: string[], status: KbMeta["status"]): Promise<number> {
+  async updateStatus(
+    ids: string[],
+    status: KbMeta["status"],
+    audit?: { reviewedBy?: string; reviewedAt?: string },
+  ): Promise<number> {
     if (ids.length === 0) return 0;
     // jsonb 字段无法在 PostgREST 中做部分合并，故先取回 meta 合并 status 后逐条写回。
     // 运维路径低并发、低批量，N 次往返可接受；避免引入 RPC/迁移扩大改动面。
@@ -112,7 +116,9 @@ export class SupabaseKbStore implements KbStore {
     for (const row of (data ?? []) as { id: string; meta: KbMeta }[]) {
       const current = row.meta ?? ({} as KbMeta);
       if (current.status === status) continue; // 已是目标状态 → 跳过
-      const meta = { ...current, status } as unknown as Record<string, unknown>;
+      const meta: Record<string, unknown> = { ...current, status } as unknown as Record<string, unknown>;
+      if (audit?.reviewedBy) meta.reviewed_by = audit.reviewedBy;
+      if (audit?.reviewedAt) meta.reviewed_at = audit.reviewedAt;
       const { error: ue } = await client()
         .from("kb_documents")
         .update({ meta, updated_at: new Date().toISOString() })

@@ -180,7 +180,11 @@ export class FileKbStore implements KbStore {
     return rows;
   }
 
-  async updateStatus(ids: string[], status: KbMeta["status"]): Promise<number> {
+  async updateStatus(
+    ids: string[],
+    status: KbMeta["status"],
+    audit?: { reviewedBy?: string; reviewedAt?: string },
+  ): Promise<number> {
     if (ids.length === 0) return 0;
     const idSet = new Set(ids);
     let changed = 0;
@@ -189,6 +193,8 @@ export class FileKbStore implements KbStore {
       for (const d of docs) {
         if (idSet.has(d.id) && d.meta.status !== status) {
           d.meta.status = status;
+          if (audit?.reviewedBy) d.meta.reviewed_by = audit.reviewedBy;
+          if (audit?.reviewedAt) d.meta.reviewed_at = audit.reviewedAt;
           changed++;
         }
       }

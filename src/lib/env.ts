@@ -67,6 +67,11 @@ export const envConfig = {
     return env("ACTIVE_PATCH");
   },
 
+  // FR-11 知识库：专家白名单（逗号分隔邮箱；为空则专家功能全部 403，安全默认）
+  get expertEmails(): string {
+    return env("EXPERT_EMAILS");
+  },
+
   // FR-7 每日免费复盘额度：默认 3；仅本地验收可用 FREE_DAILY_REPORT_LIMIT 覆盖（缺失/非法回退默认 3）
   freeDailyReportLimit: env("FREE_DAILY_REPORT_LIMIT") || undefined,
 

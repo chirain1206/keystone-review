@@ -20,6 +20,14 @@ export interface KbMeta {
   origin: "curated" | "inferred" | "community";
   /** 状态：active=生效（可注入）/ candidate=候选（绝不注入正式分析）/ deprecated=弃用 */
   status: "active" | "candidate" | "deprecated";
+  /** 提交人邮箱（专家社区提交接口写入）。 */
+  submitted_by?: string;
+  /** 提交时间 ISO（专家社区提交接口写入）。 */
+  submitted_at?: string;
+  /** 审核人邮箱（专家审核接口写入）。 */
+  reviewed_by?: string;
+  /** 审核时间 ISO（专家审核接口写入）。 */
+  reviewed_at?: string;
 }
 
 export interface KbDocument {
