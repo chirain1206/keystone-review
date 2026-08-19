@@ -43,4 +43,9 @@ describe("副本名中英映射", () => {
     expect(translateDungeonName("algeth'ar academy")).toBe("艾杰斯亚学院");
     expect(translateDungeonName("King’s Rest")).toBe("诸王之眠"); // 弯引号 ’
   });
+
+  it("Skyreach = 通天峰（用户实测反馈，已收录）", () => {
+    expect(translateDungeonName("Skyreach")).toBe("通天峰");
+    expect(dungeonDisplayName("Skyreach")).toBe("通天峰（Skyreach）");
+  });
 });

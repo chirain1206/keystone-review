@@ -7,6 +7,7 @@ import { toProcessedLog, type CombatRun, type ParseResult } from "@/lib/parser/p
 import { estimateProcessedLogTokens } from "@/lib/ai/tokens";
 import { getTurnstileToken } from "@/lib/client/turnstile";
 import { dungeonDisplayName } from "@/lib/wcl/dungeon-names";
+import { classDisplayName, specDisplayName } from "@/lib/wcl/class-spec-names";
 import { filterPlayersByFight } from "@/lib/wcl/players";
 import { shouldShowFightSelector } from "@/lib/wcl/link-preview";
 
@@ -372,8 +373,8 @@ export default function HomeUpload() {
                         {p.name}
                         {p.isUploader && <span style={{ marginLeft: 6, fontSize: 12 }}>📤 上传者</span>}
                       </td>
-                      <td>{p.class}</td>
-                      <td>{p.spec === "Unknown" ? "待确认" : p.spec}</td>
+                      <td>{classDisplayName(p.class)}</td>
+                      <td>{p.spec === "Unknown" ? "待确认" : specDisplayName(p.spec)}</td>
                       <td>
                         {p.role === "tank" ? "坦克" : p.role === "healer" ? "治疗" : p.role === "dps" ? "输出" : "-"}
                       </td>
@@ -475,7 +476,7 @@ export default function HomeUpload() {
               {selectedRun && (
                 <div style={{ marginTop: 12 }}>
                   <label className="label">
-                    你的职业：{selectedRun.combat.playerClass}（自动识别）；专精（请确认或修正）
+                    你的职业：{classDisplayName(selectedRun.combat.playerClass)}（自动识别）；专精（请确认或修正）
                   </label>
                   <input
                     className="input"

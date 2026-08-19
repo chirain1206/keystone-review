@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { dungeonDisplayName } from "@/lib/wcl/dungeon-names";
+import { specDisplayName } from "@/lib/wcl/class-spec-names";
 
 /**
  * 我的复盘（T12，FR-8）：时间倒序列表、打开、删除（级联）。
@@ -98,7 +99,7 @@ export default function HistoryList() {
                     <Link href={`/reports/${r.id}`}>{dungeonDisplayName(r.dungeon)}</Link>
                   </td>
                   <td>{r.level}</td>
-                  <td>{r.spec}</td>
+                  <td>{specDisplayName(r.spec)}</td>
                   <td>
                     {r.result === null ? (
                       "—"

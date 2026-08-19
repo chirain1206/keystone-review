@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ReportContent from "@/components/ReportContent";
 import { readSseStream } from "@/lib/client/sse";
 import { dungeonDisplayName } from "@/lib/wcl/dungeon-names";
+import { classSpecDisplayName } from "@/lib/wcl/class-spec-names";
 
 /**
  * 报告页（T12，FR-4/FR-6/FR-8/FR-9）：
@@ -344,7 +345,7 @@ export default function ReportView({ reportId }: { reportId: string }) {
         </div>
         <p>
           <span className="badge">
-            {report!.playerClass} {report!.spec}
+            {classSpecDisplayName(report!.playerClass, report!.spec)}
           </span>{" "}
           {report!.result !== null && (
             <span className={`badge ${report!.result ? "badge-ok" : "badge-err"}`}>

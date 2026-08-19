@@ -74,6 +74,10 @@ const DUNGEON_NAME_ZH: Record<string, string> = {
 
   // ── 大灾变（Cataclysm）常见大秘境 ──
   "The Stonecore": "石岩之心",
+
+  // ── 德拉诺之王（Warlords of Draenor）常见大秘境 ──
+  // 通天峰：cn.wowhead.com zone=6988（"通天峰"）与成就页 achievement=8843 核实
+  "Skyreach": "通天峰",
 };
 
 /** 归一化键：小写 + 统一弯引号，避免 WCL 命名差异导致查不到。 */

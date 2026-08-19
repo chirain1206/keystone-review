@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import ReportContent from "@/components/ReportContent";
 import { getPublicShareData } from "@/lib/share/service";
 import { dungeonDisplayName } from "@/lib/wcl/dungeon-names";
+import { classSpecDisplayName } from "@/lib/wcl/class-spec-names";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +34,7 @@ export default async function SharePage({
         </h1>
         <p>
           <span className="badge">
-            {data.report.playerClass} {data.report.spec}
+            {classSpecDisplayName(data.report.playerClass, data.report.spec)}
           </span>{" "}
           <span className={`badge ${data.report.result ? "badge-ok" : "badge-err"}`}>
             {data.report.result ? "限时成功" : "未限时完成"}
