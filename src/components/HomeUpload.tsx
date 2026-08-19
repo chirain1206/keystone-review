@@ -10,6 +10,12 @@ import { dungeonDisplayName } from "@/lib/wcl/dungeon-names";
 import { classDisplayName, specDisplayName } from "@/lib/wcl/class-spec-names";
 import { filterPlayersByFight } from "@/lib/wcl/players";
 import { shouldShowFightSelector } from "@/lib/wcl/link-preview";
+import {
+  formatDurationSec,
+  formatPercent,
+  formatRouteSimilarity,
+  sortByCombined,
+} from "@/lib/wcl/recommend-format";
 
 /** from-link 预览返回的战斗与角色。 */
 interface LinkFight {
@@ -30,6 +36,19 @@ interface LinkPlayer {
   spec: string;
   role: string;
   isUploader?: boolean;
+}
+
+/** 自动对比推荐的候选（与 /api/reports/from-link/recommendations 返回一致）。 */
+interface Recommendation {
+  code: string;
+  dungeon: string;
+  level: number | null;
+  success: boolean;
+  durationSec: number;
+  compSimilarity: number | null;
+  routeSimilarity: number | null;
+  combined: number | null;
+  url: string;
 }
 
 /**
@@ -68,6 +87,11 @@ export default function HomeUpload() {
   const [selectedPlayerId, setSelectedPlayerId] = useState<number | null>(null);
   const [linkMock, setLinkMock] = useState(false);
 
+  // 自动对比推荐状态（FR-12：同副本/相近层数/阵容相近的参考 log）
+  const [recommendations, setRecommendations] = useState<Recommendation[] | null>(null);
+  const [recommendBusy, setRecommendBusy] = useState(false);
+  const [recommendNote, setRecommendNote] = useState("");
+
   // 选中战斗对应的参与玩家（复盘对象候选）：单场/多场均按所选场次过滤，而非整份报告玩家
   const selectedFight = linkFights?.find((f) => f.id === selectedFightId) ?? null;
   const visiblePlayers =
@@ -80,11 +104,20 @@ export default function HomeUpload() {
   // 切换战斗：同步切换复盘对象候选，并把预选重置为该场的上传者/第一人
   const onFightSelect = (fightId: number) => {
     setSelectedFightId(fightId);
+    setRecommendations(null);
+    setRecommendNote("");
     const fight = linkFights?.find((f) => f.id === fightId);
     const visible =
       fight && linkPlayers ? filterPlayersByFight(linkPlayers, fight.playerIds) : linkPlayers;
     const next = visible?.find((p) => p.isUploader) ?? visible?.[0];
     setSelectedPlayerId(next?.id ?? null);
+  };
+
+  // 切换复盘对象：清空已加载的推荐（专精变了，推荐需重新获取）
+  const onPlayerSelect = (playerId: number) => {
+    setSelectedPlayerId(playerId);
+    setRecommendations(null);
+    setRecommendNote("");
   };
 
   const showError = (msg: string) => {
@@ -174,6 +207,41 @@ export default function HomeUpload() {
     } finally {
       setCreateBusy(false);
     }
+  };
+
+  // ---------- 自动对比推荐：按所选战斗 + 复盘对象获取参考 log ----------
+  const fetchRecommendations = async () => {
+    if (selectedFightId == null || selectedPlayerId == null) return;
+    setRecommendBusy(true);
+    setRecommendNote("");
+    try {
+      const res = await fetch("/api/reports/from-link/recommendations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: linkUrl.trim(),
+          fightId: selectedFightId,
+          playerId: selectedPlayerId,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        // 静默降级：推荐不可用时回退到手动粘贴对比链接（不阻塞主流程）
+        setRecommendations([]);
+        return;
+      }
+      const list = (data.candidates ?? []) as Recommendation[];
+      setRecommendations(sortByCombined(list));
+      if (list.length === 0) setRecommendNote(data.degradedReason ?? "");
+    } catch {
+      setRecommendations([]); // 网络失败静默降级
+    } finally {
+      setRecommendBusy(false);
+    }
+  };
+
+  const pickRecommendation = (c: Recommendation) => {
+    setCompareUrl(c.url);
   };
 
   // ---------- 文件解析 ----------
@@ -366,7 +434,7 @@ export default function HomeUpload() {
                           type="radio"
                           name="link-player"
                           checked={selectedPlayerId === p.id}
-                          onChange={() => setSelectedPlayerId(p.id)}
+                          onChange={() => onPlayerSelect(p.id)}
                         />
                       </td>
                       <td>
@@ -382,6 +450,75 @@ export default function HomeUpload() {
                   ))}
                 </tbody>
               </table>
+
+              {/* 选择对比目标（推荐）：同副本/相近层数/阵容相近的参考 log（FR-12） */}
+              {selectedFightId != null && selectedPlayerId != null && (
+                <div style={{ marginTop: 16 }}>
+                  <label className="label">选择对比目标（推荐）：</label>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <button className="btn" disabled={recommendBusy} onClick={fetchRecommendations}>
+                      {recommendBusy ? (
+                        <span className="spinner" />
+                      ) : recommendations ? (
+                        "重新获取推荐"
+                      ) : (
+                        "获取推荐对比目标"
+                      )}
+                    </button>
+                    {recommendNote && (
+                      <span style={{ fontSize: 13, color: "var(--text-dim)" }}>{recommendNote}</span>
+                    )}
+                  </div>
+                  {recommendations && recommendations.length > 0 && (
+                    <table className="list" style={{ marginTop: 8 }}>
+                      <thead>
+                        <tr>
+                          <th></th>
+                          <th>副本</th>
+                          <th>层数</th>
+                          <th>阵容相似</th>
+                          <th>路线相似</th>
+                          <th>时长</th>
+                          <th>结果</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {recommendations.map((c) => (
+                          <tr
+                            key={c.code}
+                            style={{ cursor: "pointer" }}
+                            onClick={() => pickRecommendation(c)}
+                          >
+                            <td>
+                              <input
+                                type="radio"
+                                name="compare-target"
+                                checked={compareUrl === c.url}
+                                onChange={() => pickRecommendation(c)}
+                              />
+                            </td>
+                            <td>{dungeonDisplayName(c.dungeon)}</td>
+                            <td>{c.level ?? "-"}</td>
+                            <td>{formatPercent(c.compSimilarity)}</td>
+                            <td>{formatRouteSimilarity(c.routeSimilarity)}</td>
+                            <td>{formatDurationSec(c.durationSec)}</td>
+                            <td>
+                              <span className={`badge ${c.success ? "badge-ok" : "badge-err"}`}>
+                                {c.success ? "限时" : "超时"}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                  {recommendations && recommendations.length === 0 && !recommendBusy && (
+                    <p style={{ color: "var(--text-dim)", fontSize: 13, marginTop: 8 }}>
+                      暂无自动推荐，可在上方手动粘贴对比链接（不阻塞复盘）。
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div style={{ height: 16 }} />
               <button className="btn btn-primary" disabled={createBusy} onClick={submitSelected}>
