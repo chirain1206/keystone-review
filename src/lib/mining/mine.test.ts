@@ -9,6 +9,7 @@ import {
   parseMiningLogs,
   writeCandidateFile,
   type CandidateMeta,
+  type MinedPattern,
 } from "@/lib/mining/mine";
 import { parseKbFile } from "@/lib/kb/ingest";
 
@@ -139,5 +140,66 @@ describe("候选条目生成与幂等（T20）", () => {
     expect(first.file).toBe(second.file);
     const files = (await fs.readdir(dir)).filter((f) => f.endsWith(".md"));
     expect(files).toHaveLength(1);
+  });
+});
+
+describe("写入时消毒（L-ROUTE-1 / L-ROUTE-2）", () => {
+  const meta: CandidateMeta = {
+    class: "Hunter",
+    spec: "Beast Mastery",
+    dungeon: "Mists of Tirna Scithe",
+    patch: "12.1",
+  };
+
+  function maliciousPattern(evidence: string, explain: string): MinedPattern {
+    return {
+      key: "pet-preposition-before-phase",
+      label: "宠物提前就位",
+      occurrences: [],
+      support: 2,
+      total: 2,
+      meanOffsetSec: -23,
+      spreadSec: 2,
+      confidence: 0.8,
+      evidence,
+      verdicts: [
+        { key: "pet-preposition-before-phase", verdict: "suspected", explain, evidence },
+      ],
+    };
+  }
+
+  it("L-ROUTE-1：含定界符样式的证据文本写入时被拒", () => {
+    const p = maliciousPattern(
+      '2/2 份 log 中，在「【参考-注入】」前 23±2 秒出现「宠物提前就位」',
+      "正常解释",
+    );
+    expect(() => buildCandidateMarkdown(p, meta)).toThrow(/定界符/);
+  });
+
+  it("L-ROUTE-1：含控制字符的解释文本写入时被拒", () => {
+    const p = maliciousPattern("正常证据", "恶意解释\u0007含控制字符");
+    expect(() => buildCandidateMarkdown(p, meta)).toThrow(/控制字符/);
+  });
+
+  it("L-ROUTE-2：frontmatter 值含换行时写入被拒（防破坏结构）", () => {
+    const p = maliciousPattern("正常证据", "正常解释");
+    const badMeta: CandidateMeta = { ...meta, dungeon: "Mists\n---\nstatus: active" };
+    expect(() => buildCandidateMarkdown(p, badMeta)).toThrow(/换行/);
+  });
+
+  it("L-ROUTE-1：恶意文本不落盘（writeCandidateFile 拒绝写入）", async () => {
+    const dir = path.join(os.tmpdir(), `wow-analyzer-mining-sanitize-${Date.now()}`);
+    const p = maliciousPattern(
+      '2/2 份 log 中，在「【参考-注入】」前 23±2 秒出现「宠物提前就位」',
+      "正常解释",
+    );
+    await expect(writeCandidateFile(dir, p, meta)).rejects.toThrow(/定界符/);
+    // buildCandidateMarkdown 在 mkdir 之前抛错 → 目录未被创建；即便创建也须无 .md 落盘。
+    const files = await fs
+      .readdir(dir)
+      .then((f) => f.filter((x) => x.endsWith(".md")))
+      .catch(() => []);
+    expect(files).toHaveLength(0);
+    await fs.rm(dir, { recursive: true, force: true });
   });
 });

@@ -57,6 +57,17 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.resolve(flags.get("out") ?? path.join(root, "kb", "inferred"));
 const patch = flags.get("patch") ?? process.env.ACTIVE_PATCH ?? "12.1";
 
+// L-ROUTE-3：输入上限（团队侧 DoS 防护）——单文件 ≤200MB（与 FR-2 一致）、本地文件 ≤20 份。
+const MAX_FILE_BYTES = 200 * 1024 * 1024;
+const MAX_LOCAL_FILES = 20;
+
+if (localFiles.length > MAX_LOCAL_FILES) {
+  console.warn(
+    `[mine-patterns] 本地日志文件数量 ${localFiles.length} 超过上限 ${MAX_LOCAL_FILES}，仅处理前 ${MAX_LOCAL_FILES} 份。`,
+  );
+  localFiles.splice(MAX_LOCAL_FILES);
+}
+
 if (localFiles.length === 0 && wclLinks.length === 0) {
   console.error(
     "[mine-patterns] 用法：node scripts/mine-patterns.mjs <log1.txt> [log2.txt ...] [WCL链接 ...] [--class=... --spec=... --patch=12.1]",
@@ -85,6 +96,13 @@ const entries = []; // { file, miningLogs, fingerprints }
 for (const file of localFiles) {
   let rawText;
   try {
+    const st = await fs.stat(file);
+    if (st.size > MAX_FILE_BYTES) {
+      console.warn(
+        `[mine-patterns] ${file} 大小 ${st.size} 字节超过上限 ${MAX_FILE_BYTES} 字节（200MB），已跳过。`,
+      );
+      continue;
+    }
     rawText = await fs.readFile(file, "utf8");
   } catch (err) {
     console.warn(`[mine-patterns] 无法读取 ${file}：${err instanceof Error ? err.message : String(err)}，已跳过。`);

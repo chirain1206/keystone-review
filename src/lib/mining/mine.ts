@@ -5,6 +5,12 @@ import {
   type IntentInput,
   type SuspectedVerdict,
 } from "@/lib/ai/intent-engine";
+import {
+  assertSafeKbText,
+  assertSafeSourceUrl,
+  CONTROL_CHAR_RE,
+  INTERNAL_SOURCE_URL,
+} from "@/lib/kb/ingest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -181,8 +187,33 @@ export interface CandidateMeta {
   patch: string;
 }
 
+/** frontmatter 单行值校验（L-ROUTE-2）：拒绝换行与控制字符，防破坏 frontmatter 结构。 */
+function assertSafeFrontmatterValue(value: string, label: string): void {
+  if (/[\r\n]/.test(value)) {
+    throw new Error(`kb/inferred: frontmatter ${label} 含换行，已拒绝写入`);
+  }
+  if (CONTROL_CHAR_RE.test(value)) {
+    throw new Error(`kb/inferred: frontmatter ${label} 含控制字符，已拒绝写入`);
+  }
+}
+
 /** 生成符合 kb/inferred 目录入库格式的候选条目 .md 内容（frontmatter + "## " 节）。 */
 export function buildCandidateMarkdown(pattern: MinedPattern, meta: CandidateMeta): string {
+  // L-ROUTE-1：写入时消毒，与 ingest 同口径 —— 恶意 log 派生的证据/解释文本
+  // 含定界符或控制字符时直接拒绝，杜绝未消毒文件落盘。
+  assertSafeKbText(pattern.evidence, "kb/inferred: 证据文本");
+  for (const v of pattern.verdicts) {
+    assertSafeKbText(v.explain, "kb/inferred: 判定解释");
+  }
+  // source_url 固定为内部约定值，仍同口径校验（纵深防御）。
+  assertSafeSourceUrl(INTERNAL_SOURCE_URL, "kb/inferred: source_url");
+
+  // L-ROUTE-2：class/spec/dungeon/patch 单行 + 无控制字符（log 派生，防破坏 frontmatter）。
+  assertSafeFrontmatterValue(meta.class, "class");
+  assertSafeFrontmatterValue(meta.spec, "spec");
+  assertSafeFrontmatterValue(meta.dungeon, "dungeon");
+  assertSafeFrontmatterValue(meta.patch, "patch");
+
   const body = pattern.verdicts.map((v) => v.explain).join("\n\n") || pattern.evidence;
   return [
     "---",
@@ -191,7 +222,7 @@ export function buildCandidateMarkdown(pattern: MinedPattern, meta: CandidateMet
     `dungeon: ${meta.dungeon}`,
     `patch: ${meta.patch}`,
     "type: intent_pattern",
-    "source_url: internal:inference",
+    `source_url: ${INTERNAL_SOURCE_URL}`,
     "---",
     "",
     "# log 推断候选（多 log 交叉挖掘）",
