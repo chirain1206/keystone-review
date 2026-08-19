@@ -30,5 +30,5 @@
 - 页面显著声明"非暴雪官方产品，与暴雪娱乐无关"。
 - 生产环境缺密钥时拒绝以 mock 降级运行（fail-fast），杜绝静默降级。
 
-[Unreleased]: https://github.com/{{OWNER}}/{{REPO}}/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/{{OWNER}}/{{REPO}}/releases/tag/v1.0.0
+[Unreleased]: https://github.com/chirain1206/keystone-review/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/chirain1206/keystone-review/releases/tag/v1.0.0

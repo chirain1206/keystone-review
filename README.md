@@ -1,4 +1,4 @@
-# {{PRODUCT_NAME}}
+# 钥石复盘
 
 [English](./README.md) · [中文](./README.zh-CN.md)
 
@@ -6,16 +6,16 @@
 > Paste a Warcraft Logs report link or upload a `WoWCombatLog.txt`, pick a fight,
 > and get a structured 6-chapter review — then ask questions about that specific run.
 
-[![License](https://img.shields.io/github/license/{{OWNER}}/{{REPO}}?style=flat-square&label=License)](https://github.com/{{OWNER}}/{{REPO}}/blob/main/LICENSE)
-[![Release](https://img.shields.io/github/v/release/{{OWNER}}/{{REPO}}?style=flat-square&label=Release)](https://github.com/{{OWNER}}/{{REPO}}/releases)
-[![CI](https://img.shields.io/github/actions/workflow/status/{{OWNER}}/{{REPO}}/ci.yml?style=flat-square&label=CI&branch=main)](https://github.com/{{OWNER}}/{{REPO}}/actions/workflows/ci.yml)
-[![Last commit](https://img.shields.io/github/last-commit/{{OWNER}}/{{REPO}}?style=flat-square)](https://github.com/{{OWNER}}/{{REPO}}/commits/main)
-[![Stars](https://img.shields.io/github/stars/{{OWNER}}/{{REPO}}?style=flat-square)](https://github.com/{{OWNER}}/{{REPO}}/stargazers)
-[![Dependabot](https://img.shields.io/badge/Dependabot-enabled-0366d6?style=flat-square&logo=dependabot)](https://github.com/{{OWNER}}/{{REPO}}/security/dependabot)
+[![License](https://img.shields.io/github/license/chirain1206/keystone-review?style=flat-square&label=License)](https://github.com/chirain1206/keystone-review/blob/main/LICENSE)
+[![Release](https://img.shields.io/github/v/release/chirain1206/keystone-review?style=flat-square&label=Release)](https://github.com/chirain1206/keystone-review/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/chirain1206/keystone-review/ci.yml?style=flat-square&label=CI&branch=main)](https://github.com/chirain1206/keystone-review/actions/workflows/ci.yml)
+[![Last commit](https://img.shields.io/github/last-commit/chirain1206/keystone-review?style=flat-square)](https://github.com/chirain1206/keystone-review/commits/main)
+[![Stars](https://img.shields.io/github/stars/chirain1206/keystone-review?style=flat-square)](https://github.com/chirain1206/keystone-review/stargazers)
+[![Dependabot](https://img.shields.io/badge/Dependabot-enabled-0366d6?style=flat-square&logo=dependabot)](https://github.com/chirain1206/keystone-review/security/dependabot)
 
 ## What it is
 
-`{{PRODUCT_NAME}}` is an AI review coach for Mythic+ players who already clear keys but
+`钥石复盘` is an AI review coach for Mythic+ players who already clear keys but
 want to push further. You already have logs — this tool turns them into answers:
 
 - **What did I actually do wrong** (with timestamps and spell evidence, not vague advice).
@@ -73,7 +73,7 @@ Open http://localhost:3000.
 
 ### Deploy to Vercel (one click)
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/{{OWNER}}/{{REPO}})
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/chirain1206/keystone-review)
 
 After cloning, configure the environment variables listed in
 [`.env.example`](./.env.example) in your Vercel project settings, then deploy.
@@ -106,7 +106,7 @@ in production. See [`.env.example`](./.env.example) for the full, commented list
 
 ### Disclaimer
 
-**{{PRODUCT_NAME}} is not an official Blizzard product and is not affiliated with Blizzard
+**钥石复盘 is not an official Blizzard product and is not affiliated with Blizzard
 Entertainment.** World of Warcraft and related trademarks are the property of their respective
 owners. This project is for personal learning and analysis only; it does not sell any in-game
 content. See [`src/app/legal/disclaimer`](./src/app/legal/disclaimer/page.tsx) for the in-app
@@ -134,7 +134,7 @@ a cooldown to align with a damage window), it is explained as a correct decision
 flagged as a mistake.
 
 **Something broke / I found a bug.**
-Please open an issue using the [bug report template](https://github.com/{{OWNER}}/{{REPO}}/issues/new?template=bug_report.md).
+Please open an issue using the [bug report template](https://github.com/chirain1206/keystone-review/issues/new?template=bug_report.md).
 
 ## Contributing
 
@@ -144,4 +144,4 @@ Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) and
 
 ## License
 
-[MIT](./LICENSE) © 2026 {{AUTHOR}}
+[MIT](./LICENSE) © 2026 chirain1206

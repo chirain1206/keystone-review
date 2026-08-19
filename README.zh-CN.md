@@ -1,20 +1,20 @@
-# {{PRODUCT_NAME}}
+# 钥石复盘
 
 [English](./README.md) · [中文](./README.zh-CN.md)
 
 > 给想进步的大秘境玩家的 AI 复盘教练。粘贴 Warcraft Logs 报告链接，或上传 `WoWCombatLog.txt`，
 > 选一场战斗，就能得到一份结构化 6 章复盘报告——还能针对这一场 log 继续提问。
 
-[![License](https://img.shields.io/github/license/{{OWNER}}/{{REPO}}?style=flat-square&label=License)](https://github.com/{{OWNER}}/{{REPO}}/blob/main/LICENSE)
-[![Release](https://img.shields.io/github/v/release/{{OWNER}}/{{REPO}}?style=flat-square&label=Release)](https://github.com/{{OWNER}}/{{REPO}}/releases)
-[![CI](https://img.shields.io/github/actions/workflow/status/{{OWNER}}/{{REPO}}/ci.yml?style=flat-square&label=CI&branch=main)](https://github.com/{{OWNER}}/{{REPO}}/actions/workflows/ci.yml)
-[![Last commit](https://img.shields.io/github/last-commit/{{OWNER}}/{{REPO}}?style=flat-square)](https://github.com/{{OWNER}}/{{REPO}}/commits/main)
-[![Stars](https://img.shields.io/github/stars/{{OWNER}}/{{REPO}}?style=flat-square)](https://github.com/{{OWNER}}/{{REPO}}/stargazers)
-[![Dependabot](https://img.shields.io/badge/Dependabot-enabled-0366d6?style=flat-square&logo=dependabot)](https://github.com/{{OWNER}}/{{REPO}}/security/dependabot)
+[![License](https://img.shields.io/github/license/chirain1206/keystone-review?style=flat-square&label=License)](https://github.com/chirain1206/keystone-review/blob/main/LICENSE)
+[![Release](https://img.shields.io/github/v/release/chirain1206/keystone-review?style=flat-square&label=Release)](https://github.com/chirain1206/keystone-review/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/chirain1206/keystone-review/ci.yml?style=flat-square&label=CI&branch=main)](https://github.com/chirain1206/keystone-review/actions/workflows/ci.yml)
+[![Last commit](https://img.shields.io/github/last-commit/chirain1206/keystone-review?style=flat-square)](https://github.com/chirain1206/keystone-review/commits/main)
+[![Stars](https://img.shields.io/github/stars/chirain1206/keystone-review?style=flat-square)](https://github.com/chirain1206/keystone-review/stargazers)
+[![Dependabot](https://img.shields.io/badge/Dependabot-enabled-0366d6?style=flat-square&logo=dependabot)](https://github.com/chirain1206/keystone-review/security/dependabot)
 
 ## 这是什么
 
-`{{PRODUCT_NAME}}` 是一款面向大秘境玩家的 AI 复盘教练，专门服务"已经能打、但卡层数 / 卡分、想更进一步"的中高端玩家。
+`钥石复盘` 是一款面向大秘境玩家的 AI 复盘教练，专门服务"已经能打、但卡层数 / 卡分、想更进一步"的中高端玩家。
 你手里本来就有 log——它帮你把 log 变成答案：
 
 - **我到底哪里打错了**（带时间戳和技能证据，而不是"打断不够"这种空话）。
@@ -62,7 +62,7 @@ npm run dev
 
 ### 一键部署到 Vercel
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/{{OWNER}}/{{REPO}})
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/chirain1206/keystone-review)
 
 克隆后在 Vercel 项目设置里，按 [`.env.example`](./.env.example) 配置环境变量，然后部署。
 
@@ -89,7 +89,7 @@ npm run dev
 
 ### 免责声明
 
-**{{PRODUCT_NAME}} 非暴雪官方产品，与暴雪娱乐无关。** 《魔兽世界》及相关商标归其各自权利人所有。
+**钥石复盘 非暴雪官方产品，与暴雪娱乐无关。** 《魔兽世界》及相关商标归其各自权利人所有。
 本项目仅用于个人学习与分析，不销售任何游戏内容。应用内免责声明见 [`src/app/legal/disclaimer`](./src/app/legal/disclaimer/page.tsx)。
 
 ## 常见问题
@@ -110,7 +110,7 @@ npm run dev
 这是战术意图引擎在工作：当一个操作看着反常、但有合理解释（比如留爆发对齐易伤窗口）时，会被解释为正确决策，而不是误判为失误。
 
 **遇到问题 / 发现 bug？**
-请用 [bug 报告模板](https://github.com/{{OWNER}}/{{REPO}}/issues/new?template=bug_report.md) 提 issue。
+请用 [bug 报告模板](https://github.com/chirain1206/keystone-review/issues/new?template=bug_report.md) 提 issue。
 
 ## 参与贡献
 
@@ -119,4 +119,4 @@ npm run dev
 
 ## 许可证
 
-[MIT](./LICENSE) © 2026 {{AUTHOR}}
+[MIT](./LICENSE) © 2026 chirain1206

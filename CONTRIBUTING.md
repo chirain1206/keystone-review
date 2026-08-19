@@ -1,11 +1,11 @@
 # 贡献指南
 
-感谢你想为 {{PRODUCT_NAME}} 做贡献！这是一个面向魔兽世界大秘境玩家的 AI 复盘工具，欢迎以任何形式参与：报 bug、提建议、改文档、写代码。
+感谢你想为 钥石复盘 做贡献！这是一个面向魔兽世界大秘境玩家的 AI 复盘工具，欢迎以任何形式参与：报 bug、提建议、改文档、写代码。
 
 ## 参与方式
 
-- **报告问题**：用 [bug 报告模板](https://github.com/{{OWNER}}/{{REPO}}/issues/new?template=bug_report.md)，写清楚"期望行为 / 实际行为 / 复现步骤 / 环境"。
-- **提功能建议**：用 [功能请求模板](https://github.com/{{OWNER}}/{{REPO}}/issues/new?template=feature_request.md)。
+- **报告问题**：用 [bug 报告模板](https://github.com/chirain1206/keystone-review/issues/new?template=bug_report.md)，写清楚"期望行为 / 实际行为 / 复现步骤 / 环境"。
+- **提功能建议**：用 [功能请求模板](https://github.com/chirain1206/keystone-review/issues/new?template=feature_request.md)。
 - **改代码**：Fork 本仓库 → 开一个分支 → 改动 → 提 PR。
 
 ## 开发环境

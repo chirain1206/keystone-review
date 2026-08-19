@@ -28,13 +28,13 @@
    ```
 4. **tag**：
    ```bash
-   git tag -a v1.0.0 -m "{{PRODUCT_NAME}} v1.0.0"
+   git tag -a v1.0.0 -m "钥石复盘 v1.0.0"
    git push origin main --tags
    ```
 5. **Release**（在 GitHub 网页或 CLI 创建）：
    ```bash
    gh release create v1.0.0 \
-     --title "{{PRODUCT_NAME}} v1.0.0" \
+     --title "钥石复盘 v1.0.0" \
      --notes "首个公开发布版本。详见 CHANGELOG.md。"
    ```
 
@@ -50,11 +50,11 @@ README 徽章顺序（固定）：License / Release / CI / Last commit / Stars /
 
 | # | 徽章 | 验证 URL（`curl -I` 应返回 200） | 显示值校验 |
 | --- | --- | --- | --- |
-| 1 | License | `https://img.shields.io/github/license/{{OWNER}}/{{REPO}}` | `MIT License` |
-| 2 | Release | `https://img.shields.io/github/v/release/{{OWNER}}/{{REPO}}` | == `v1.0.0` |
-| 3 | CI | `https://img.shields.io/github/actions/workflow/status/{{OWNER}}/{{REPO}}/ci.yml?branch=main` | `passing` |
-| 4 | Last commit | `https://img.shields.io/github/last-commit/{{OWNER}}/{{REPO}}` | 非空日期 |
-| 5 | Stars | `https://img.shields.io/github/stars/{{OWNER}}/{{REPO}}` | ≥ 0 |
+| 1 | License | `https://img.shields.io/github/license/chirain1206/keystone-review` | `MIT License` |
+| 2 | Release | `https://img.shields.io/github/v/release/chirain1206/keystone-review` | == `v1.0.0` |
+| 3 | CI | `https://img.shields.io/github/actions/workflow/status/chirain1206/keystone-review/ci.yml?branch=main` | `passing` |
+| 4 | Last commit | `https://img.shields.io/github/last-commit/chirain1206/keystone-review` | 非空日期 |
+| 5 | Stars | `https://img.shields.io/github/stars/chirain1206/keystone-review` | ≥ 0 |
 | 6 | Dependabot | `https://img.shields.io/badge/Dependabot-enabled-0366d6` | `Dependabot enabled` |
 
 **版本徽章显示值 == git tag == CHANGELOG 顶部 == Release title**，四者必须一致为 `v1.0.0`。
