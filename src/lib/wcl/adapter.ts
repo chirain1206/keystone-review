@@ -28,6 +28,8 @@ export interface WclReportMeta {
   code: string;
   title: string;
   fights: WclFight[];
+  /** true = mock 合成数据（未配置 WCL 密钥），前端据此显示"演示数据"标注。 */
+  isMock?: boolean;
 }
 
 export type WclErrorCode = "INVALID_LINK" | "NOT_MYTHIC" | "FETCH_FAILED" | "NO_MYTHIC_FIGHT";
@@ -57,11 +59,36 @@ interface OAuthTokenResponse {
   error?: string;
 }
 
-async function getAccessToken(region: "www" | "cn"): Promise<string> {
+/** 测试注入点：fetch 与凭证可覆写（缺省读 envConfig）。 */
+export interface WclOAuthDeps {
+  fetchFn?: typeof fetch;
+  clientId?: string;
+  clientSecret?: string;
+}
+
+/**
+ * 获取 WCL OAuth2 client_credentials 访问令牌（RFC 6749 §4.4/§2.3.1）。
+ * 凭证以 HTTP Basic 头携带：Authorization: Basic base64(client_id:client_secret)。
+ * 官方端点为 https://{www|cn}.warcraftlogs.com/oauth/token。
+ */
+export async function getAccessToken(
+  region: "www" | "cn",
+  deps: WclOAuthDeps = {},
+): Promise<string> {
+  const clientId = deps.clientId ?? envConfig.wclClientId;
+  const clientSecret = deps.clientSecret ?? envConfig.wclClientSecret;
+  if (!clientId || !clientSecret) {
+    throw new Error("缺少 WCL_CLIENT_ID / WCL_CLIENT_SECRET 配置，无法获取 WCL 访问令牌");
+  }
   const host = region === "cn" ? "cn.warcraftlogs.com" : "www.warcraftlogs.com";
-  const res = await fetch(`https://${host}/oauth/token`, {
+  const basic = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64");
+  const fetchFn = deps.fetchFn ?? fetch;
+  const res = await fetchFn(`https://${host}/oauth/token`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${basic}`,
+    },
     body: new URLSearchParams({ grant_type: "client_credentials" }),
   });
   if (!res.ok) throw new Error(`WCL OAuth ${res.status}`);
@@ -194,7 +221,7 @@ function fetchMockMeta(code: string): WclReportMeta {
           playerSpec: "Fire",
         },
       ];
-  return { code, title: `WCL 报告 ${code}（mock 数据）`, fights };
+  return { code, title: `WCL 报告 ${code}（mock 数据）`, fights, isMock: true };
 }
 
 // ---------- 统一入口 ----------

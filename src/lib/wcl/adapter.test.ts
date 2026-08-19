@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { getWclReportMeta, parseWclUrl } from "@/lib/wcl/adapter";
+import { describe, expect, it, vi } from "vitest";
+import { getAccessToken, getWclReportMeta, parseWclUrl } from "@/lib/wcl/adapter";
 
 /**
  * T8 验收（FR-1/FR-3）：
@@ -54,5 +54,59 @@ describe("WCL 元数据（mock 适配器）", () => {
   it("国服链接同样可用（mock 语义一致）", async () => {
     const r = await getWclReportMeta("https://cn.warcraftlogs.com/reports/CnDemo");
     expect(r.ok).toBe(true);
+  });
+});
+
+describe("WCL OAuth getAccessToken（client_credentials）", () => {
+  it("携带 HTTP Basic 头（base64(client_id:client_secret)）与 client_credentials body", async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify({ access_token: "tok-123", token_type: "bearer" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const token = await getAccessToken("www", {
+      fetchFn,
+      clientId: "my-id",
+      clientSecret: "my-secret",
+    });
+
+    expect(token).toBe("tok-123");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe("https://www.warcraftlogs.com/oauth/token");
+    expect(init?.method).toBe("POST");
+
+    const headers = new Headers(init?.headers);
+    expect(headers.get("Authorization")).toBe("Basic bXktaWQ6bXktc2VjcmV0"); // base64(my-id:my-secret)
+    expect(headers.get("Content-Type")).toBe("application/x-www-form-urlencoded");
+    expect(String(init?.body)).toBe("grant_type=client_credentials");
+  });
+
+  it("cn 区域使用 cn.warcraftlogs.com 端点", async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify({ access_token: "t" }), { status: 200 }),
+    );
+    await getAccessToken("cn", { fetchFn, clientId: "id", clientSecret: "secret" });
+    expect(fetchFn.mock.calls[0][0]).toBe("https://cn.warcraftlogs.com/oauth/token");
+  });
+
+  it("缺少凭证时抛错且不发起请求", async () => {
+    const fetchFn = vi.fn<typeof fetch>();
+    await expect(getAccessToken("www", { fetchFn, clientId: "", clientSecret: "s" })).rejects.toThrow(
+      "WCL_CLIENT_ID",
+    );
+    await expect(
+      getAccessToken("www", { fetchFn, clientId: "id", clientSecret: undefined }),
+    ).rejects.toThrow("WCL_CLIENT_SECRET");
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("未注入凭证时回退读 envConfig，未配置则抛错", async () => {
+    // 本测试进程未设置 WCL_CLIENT_ID/WCL_CLIENT_SECRET，envConfig 读取为空串
+    await expect(getAccessToken("www", { fetchFn: vi.fn<typeof fetch>() })).rejects.toThrow(
+      "WCL_CLIENT_ID",
+    );
   });
 });
