@@ -24,6 +24,23 @@ export function parseMagicLinkToken(search: string): string | null {
   return null;
 }
 
+/** 登录魔法链接失效 / 过期的友好提示文案。 */
+export const AUTH_LINK_EXPIRED_MESSAGE = "登录链接已失效或过期，请重新获取验证码";
+
+/**
+ * 解析魔法链接回调的 error 参数：Supabase 在链接失效 / 过期时重定向到
+ * ?error=access_denied&error_code=otp_expired&error_description=...。
+ * 命中（存在 error 或 error_description 参数）则返回友好提示文案；否则返回 null。
+ * 6 位验证码路径不经过 URL 回调，故此解析不影响该路径。
+ */
+export function parseAuthLinkError(search: string): string | null {
+  const params = new URLSearchParams(search);
+  if (params.has("error") || params.has("error_description")) {
+    return AUTH_LINK_EXPIRED_MESSAGE;
+  }
+  return null;
+}
+
 /** 读取最近邮箱（SSR / 无 window / 读取失败 → null）。 */
 export function readLastEmail(): string | null {
   if (typeof window === "undefined") return null;

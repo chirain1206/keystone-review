@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseMagicLinkToken } from "@/lib/auth/magic-link";
+import {
+  AUTH_LINK_EXPIRED_MESSAGE,
+  parseAuthLinkError,
+  parseMagicLinkToken,
+} from "@/lib/auth/magic-link";
 
 /**
  * FR-7 增强：邮箱魔法链接回调参数解析（纯函数）。
@@ -34,5 +38,37 @@ describe("parseMagicLinkToken（魔法链接回调参数解析）", () => {
 
   it("忽略 token_hash 前后空白", () => {
     expect(parseMagicLinkToken("?token_hash=%20abc%20")).toBe("abc");
+  });
+});
+
+/**
+ * 登录链接失效 / 过期：Supabase 重定向到 ?error=...&error_code=...&error_description=...
+ * 纯函数解析，命中返回友好提示文案；未命中返回 null（不影响 6 位验证码路径）。
+ */
+describe("parseAuthLinkError（登录链接失效提示解析）", () => {
+  it("含 error 参数 → 返回友好提示", () => {
+    expect(parseAuthLinkError("?error=access_denied&error_code=otp_expired")).toBe(
+      AUTH_LINK_EXPIRED_MESSAGE,
+    );
+  });
+
+  it("仅含 error_description 参数 → 返回友好提示", () => {
+    expect(parseAuthLinkError("?error_description=Email+link+is+invalid+or+has+expired")).toBe(
+      AUTH_LINK_EXPIRED_MESSAGE,
+    );
+  });
+
+  it("完整 Supabase 过期回调参数 → 返回友好提示", () => {
+    expect(
+      parseAuthLinkError(
+        "?error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired",
+      ),
+    ).toBe(AUTH_LINK_EXPIRED_MESSAGE);
+  });
+
+  it("无 error / error_description → null（不影响正常登录与 6 位验证码）", () => {
+    expect(parseAuthLinkError("")).toBeNull();
+    expect(parseAuthLinkError("?token_hash=abc123&type=email")).toBeNull();
+    expect(parseAuthLinkError("?code=legacy-token")).toBeNull();
   });
 });

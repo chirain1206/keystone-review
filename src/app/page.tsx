@@ -1,8 +1,10 @@
 import HomeUpload from "@/components/HomeUpload";
+import AuthLinkErrorNotice from "@/components/AuthLinkErrorNotice";
 
 export default function Home() {
   return (
     <main>
+      <AuthLinkErrorNotice />
       <div className="card" style={{ textAlign: "center", padding: "36px 20px" }}>
         <h1 style={{ margin: "0 0 8px", fontSize: 26 }}>
           看懂你的 log，练对下一把
