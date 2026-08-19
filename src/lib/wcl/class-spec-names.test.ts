@@ -53,8 +53,8 @@ describe("职业/专精名中英映射", () => {
     expect(translateClassName("Death Knight")).toBe("死亡骑士");
     expect(translateClassName("DemonHunter")).toBe("恶魔猎手");
     expect(translateClassName("Demon Hunter")).toBe("恶魔猎手");
-    expect(classDisplayName("DeathKnight")).toBe("死亡骑士（Death Knight）");
-    expect(classDisplayName("Death Knight")).toBe("死亡骑士（Death Knight）");
+    expect(classDisplayName("DeathKnight")).toBe("死亡骑士");
+    expect(classDisplayName("Death Knight")).toBe("死亡骑士");
   });
 
   it("全部专精收录且译名非空", () => {
@@ -108,20 +108,18 @@ describe("职业/专精名中英映射", () => {
     expect(translateSpecName("Devourer")).toBe("吞噬者"); // 恶魔猎手第三专精（12.0）
   });
 
-  it("展示形式 = 国服译名 + 英文原名括号", () => {
-    expect(classDisplayName("Mage")).toBe("法师（Mage）");
-    expect(specDisplayName("Fire")).toBe("火焰（Fire）");
-    expect(specDisplayName("Beast Mastery")).toBe("野兽控制（Beast Mastery）");
-    expect(classDisplayName("DeathKnight")).toBe("死亡骑士（Death Knight）");
+  it("zh 模式展示形式 = 国服纯中文译名", () => {
+    expect(classDisplayName("Mage")).toBe("法师");
+    expect(specDisplayName("Fire")).toBe("火焰");
+    expect(specDisplayName("Beast Mastery")).toBe("野兽控制");
+    expect(classDisplayName("DeathKnight")).toBe("死亡骑士");
   });
 
   it("组合展示：职业 + 专精，Unknown/空跳过", () => {
-    expect(classSpecDisplayName("DeathKnight", "Unholy")).toBe(
-      "死亡骑士（Death Knight） 邪恶（Unholy）",
-    );
-    expect(classSpecDisplayName("Mage", "Unknown")).toBe("法师（Mage）");
-    expect(classSpecDisplayName("Mage", "")).toBe("法师（Mage）");
-    expect(classSpecDisplayName("Unknown", "Fire")).toBe("火焰（Fire）");
+    expect(classSpecDisplayName("DeathKnight", "Unholy")).toBe("死亡骑士 邪恶");
+    expect(classSpecDisplayName("Mage", "Unknown")).toBe("法师");
+    expect(classSpecDisplayName("Mage", "")).toBe("法师");
+    expect(classSpecDisplayName("Unknown", "Fire")).toBe("火焰");
     expect(classSpecDisplayName("Unknown", "Unknown")).toBe("Unknown");
   });
 
@@ -144,5 +142,28 @@ describe("职业/专精名中英映射", () => {
     expect(ALL_CLASS_NAMES).toContain("Evoker");
     expect(ALL_CLASS_NAMES).toContain("Demon Hunter");
     expect(ALL_CLASS_NAMES).toContain("Death Knight");
+  });
+});
+
+describe("职业/专精名语言切换（zh/en）", () => {
+  it("zh 模式纯中文，未命中回退原文", () => {
+    expect(classDisplayName("Mage", "zh")).toBe("法师");
+    expect(specDisplayName("Fire", "zh")).toBe("火焰");
+    expect(classDisplayName("SomeNewClass", "zh")).toBe("SomeNewClass");
+  });
+
+  it("en 模式纯英文（规范原名，归一化驼峰），未命中回退原文", () => {
+    expect(classDisplayName("Mage", "en")).toBe("Mage");
+    expect(classDisplayName("DeathKnight", "en")).toBe("Death Knight");
+    expect(specDisplayName("BeastMastery", "en")).toBe("Beast Mastery");
+    expect(specDisplayName("Fire", "en")).toBe("Fire");
+    expect(classDisplayName("SomeNewClass", "en")).toBe("SomeNewClass");
+  });
+
+  it("组合展示随语言切换", () => {
+    expect(classSpecDisplayName("DeathKnight", "Unholy", "zh")).toBe("死亡骑士 邪恶");
+    expect(classSpecDisplayName("DeathKnight", "Unholy", "en")).toBe("Death Knight Unholy");
+    expect(classSpecDisplayName("Unknown", "Unknown", "en")).toBe("Unknown");
+    expect(classSpecDisplayName("", "", "en")).toBe("Unknown");
   });
 });

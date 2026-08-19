@@ -23,7 +23,12 @@
  *    "恩护，增辉或湮灭"与灰机wiki 为准（Preservation = 恩护，非"保护"）；
  *    恶魔猎手第三专精"吞噬者"（Devourer）为至暗之夜 12.0 前夕新增，以国服官方
  *    专精名"吞噬者"核实（17173/网易官方转载 + 暴雪官方蓝贴）。
+ *
+ * 语言切换（zh/en，见 src/lib/i18n.ts）：展示层按全局 lang 输出纯中文或纯英文；
+ * 存储层与 AI 提示词仍保留游戏内英文原名，不受语言切换影响。
  */
+
+import type { Lang } from "@/lib/i18n";
 
 interface NameEntry {
   /** 规范英文原名（游戏内写法，带空格，如 "Death Knight"、"Beast Mastery"）。 */
@@ -134,10 +139,15 @@ export function translateClassName(english: string): string | null {
   return CLASS_MAP[normalizeKey(english)]?.zh ?? null;
 }
 
-/** 展示用职业名：国服译名 + 英文原名括号（如 "死亡骑士（Death Knight）"）；未收录原样返回。 */
-export function classDisplayName(english: string): string {
+/**
+ * 展示用职业名（随界面语言切换）：
+ *  - zh（默认）：国服纯中文译名（如 "死亡骑士"）；未收录 → 原样返回；
+ *  - en：规范英文原名（如 "Death Knight"，归一化 "DeathKnight"→"Death Knight"）；未收录 → 原样返回。
+ */
+export function classDisplayName(english: string, lang: Lang = "zh"): string {
   const e = CLASS_MAP[normalizeKey(english)];
-  return e ? `${e.zh}（${e.en}）` : english;
+  if (!e) return english;
+  return lang === "en" ? e.en : e.zh;
 }
 
 /** 返回英文专精名对应的国服官方译名；查无则返回 null。 */
@@ -145,20 +155,25 @@ export function translateSpecName(english: string): string | null {
   return SPEC_MAP[normalizeKey(english)]?.zh ?? null;
 }
 
-/** 展示用专精名：国服译名 + 英文原名括号（如 "邪恶（Unholy）"）；未收录原样返回。 */
-export function specDisplayName(english: string): string {
+/**
+ * 展示用专精名（随界面语言切换）：
+ *  - zh（默认）：国服纯中文译名（如 "邪恶"）；未收录 → 原样返回；
+ *  - en：规范英文原名（如 "Unholy"）；未收录 → 原样返回。
+ */
+export function specDisplayName(english: string, lang: Lang = "zh"): string {
   const e = SPEC_MAP[normalizeKey(english)];
-  return e ? `${e.zh}（${e.en}）` : english;
+  if (!e) return english;
+  return lang === "en" ? e.en : e.zh;
 }
 
 /**
- * 展示用"职业 + 专精"组合（报告页 header / 分享页徽章）：
- * "死亡骑士（Death Knight） 邪恶（Unholy）"；"Unknown" 或空值跳过对应项，
+ * 展示用"职业 + 专精"组合（报告页 header / 分享页徽章，随界面语言切换）：
+ * zh → "死亡骑士 邪恶"；en → "Death Knight Unholy"；"Unknown" 或空值跳过对应项，
  * 二者均未知时回退为原英文 class（不报错）。
  */
-export function classSpecDisplayName(cls: string, spec: string): string {
+export function classSpecDisplayName(cls: string, spec: string, lang: Lang = "zh"): string {
   const parts: string[] = [];
-  if (cls && cls !== "Unknown") parts.push(classDisplayName(cls));
-  if (spec && spec !== "Unknown") parts.push(specDisplayName(spec));
-  return parts.length > 0 ? parts.join(" ") : cls || "职业未知";
+  if (cls && cls !== "Unknown") parts.push(classDisplayName(cls, lang));
+  if (spec && spec !== "Unknown") parts.push(specDisplayName(spec, lang));
+  return parts.length > 0 ? parts.join(" ") : cls || (lang === "en" ? "Unknown" : "职业未知");
 }

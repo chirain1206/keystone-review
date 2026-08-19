@@ -12,7 +12,12 @@
  *    worldofwarcraft.blizzard.com/zh-cn 地下城成就页 + 17173 官方资讯
  *  - 至暗之夜第 2 赛季（12.1）8 本：暴雪国服官网新闻 24294369 + method.gg
  *  - 地心之战第 1 赛季、巨龙时代、暗影国度：灰机wiki / 百度百科 / wowhead 中文站
+ *
+ * 语言切换（zh/en，见 src/lib/i18n.ts）：展示层按全局 lang 输出纯中文或纯英文；
+ * 存储层与 AI 提示词仍保留游戏内英文原名，不受语言切换影响。
  */
+
+import type { Lang } from "@/lib/i18n";
 
 const DUNGEON_NAME_ZH: Record<string, string> = {
   // ── 至暗之夜（Midnight）第 2 赛季（12.1，当前轮换）──
@@ -22,6 +27,7 @@ const DUNGEON_NAME_ZH: Record<string, string> = {
   "The Blinding Vale": "夺目谷",
   "Voidscar Arena": "虚空之痕竞技场",
   "King's Rest": "诸王之眠",
+  "Kings' Rest": "诸王之眠", // WCL 实际拼写（撇号在 s 后），与 "King's Rest" 同归一化
   "Temple of Sethraliss": "塞塔里斯神庙",
   "Ruby Life Pools": "红玉新生法池",
 
@@ -93,29 +99,56 @@ const DUNGEON_NAME_ZH: Record<string, string> = {
   "Skyreach": "通天峰",
 };
 
-/** 归一化键：小写 + 统一弯引号，避免 WCL 命名差异导致查不到。 */
+/**
+ * 归一化键：小写 + 去除撇号/双引号 + 连字符转空格 + 折叠空白。
+ * 容忍 WCL 拼写差异：
+ *  - 撇号位置："Kings' Rest" vs "King's Rest"（撇号整体去除后同为 "kings rest"）；
+ *  - 弯/直引号："King’s Rest" vs "King's Rest"；
+ *  - 连字符："Nexus-Point Xenas" vs "Nexus Point Xenas"；
+ *  - 大小写："algeth'ar academy" vs "Algeth'ar Academy"。
+ */
 function normalizeKey(name: string): string {
   return name
     .trim()
     .toLowerCase()
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201c\u201d]/g, '"');
+    .replace(/[\u2018\u2019']/g, "")
+    .replace(/[\u201c\u201d"]/g, "")
+    .replace(/[\u2013\u2014-]/g, " ")
+    .replace(/\s+/g, " ");
 }
 
-const NORMALIZED: Record<string, string> = Object.fromEntries(
+const NORMALIZED_ZH: Record<string, string> = Object.fromEntries(
   Object.entries(DUNGEON_NAME_ZH).map(([en, zh]) => [normalizeKey(en), zh]),
 );
 
+/**
+ * 归一化键 → 规范英文原名（en 模式输出用，顺带归一化 WCL 拼写差异）。
+ * 注意"首次命中优先"：重复归一化键（如 "King's Rest" 与变体 "Kings' Rest"）保留
+ * 先出现的规范拼写，保证 en 模式输出 "King's Rest" 而非变体拼写。
+ */
+const NORMALIZED_EN: Record<string, string> = {};
+for (const en of Object.keys(DUNGEON_NAME_ZH)) {
+  const key = normalizeKey(en);
+  if (!(key in NORMALIZED_EN)) NORMALIZED_EN[key] = en;
+}
+
 /** 返回英文副本名对应的国服官方译名；查无则返回 null。 */
 export function translateDungeonName(english: string): string | null {
-  return NORMALIZED[normalizeKey(english)] ?? null;
+  return NORMALIZED_ZH[normalizeKey(english)] ?? null;
+}
+
+/** 返回英文副本名对应的规范英文原名（en 模式用）；查无则返回 null。 */
+export function canonicalDungeonName(english: string): string | null {
+  return NORMALIZED_EN[normalizeKey(english)] ?? null;
 }
 
 /**
- * 展示用副本名：国服译名 + 英文原名括号（如 "毒牙祭坛（Altar of Fangs）"）。
- * 未收录的副本原样返回英文名（不影响历史行为）。
+ * 展示用副本名（随界面语言切换）：
+ *  - zh（默认）：国服官方纯中文译名（如 "毒牙祭坛"）；未收录 → 原英文名；
+ *  - en：规范英文原名（如 "Altar of Fangs"，并归一化 "Kings' Rest"→"King's Rest"）；
+ *    未收录 → 原样返回。
  */
-export function dungeonDisplayName(english: string): string {
-  const zh = translateDungeonName(english);
-  return zh ? `${zh}（${english}）` : english;
+export function dungeonDisplayName(english: string, lang: Lang = "zh"): string {
+  if (lang === "en") return canonicalDungeonName(english) ?? english;
+  return translateDungeonName(english) ?? english;
 }

@@ -53,12 +53,12 @@ describe("副本名中英映射", () => {
     expect(translateDungeonName("Seat of the Triumvirate")).toBe("执政团之座");
   });
 
-  it("展示形式 = 国服译名 + 英文原名括号", () => {
-    expect(dungeonDisplayName("Altar of Fangs")).toBe("毒牙祭坛（Altar of Fangs）");
-    expect(dungeonDisplayName("Algeth'ar Academy")).toBe("艾杰斯亚学院（Algeth'ar Academy）");
-    expect(dungeonDisplayName("Mists of Tirna Scithe")).toBe("塞兹仙林的迷雾（Mists of Tirna Scithe）");
-    expect(dungeonDisplayName("Grim Batol")).toBe("格瑞姆巴托（Grim Batol）");
-    expect(dungeonDisplayName("The Stonevault")).toBe("矶石宝库（The Stonevault）");
+  it("zh 模式展示形式 = 国服纯中文译名", () => {
+    expect(dungeonDisplayName("Altar of Fangs")).toBe("毒牙祭坛");
+    expect(dungeonDisplayName("Algeth'ar Academy")).toBe("艾杰斯亚学院");
+    expect(dungeonDisplayName("Mists of Tirna Scithe")).toBe("塞兹仙林的迷雾");
+    expect(dungeonDisplayName("Grim Batol")).toBe("格瑞姆巴托");
+    expect(dungeonDisplayName("The Stonevault")).toBe("矶石宝库");
   });
 
   it("未收录副本原样返回英文名（行为不变）", () => {
@@ -73,6 +73,29 @@ describe("副本名中英映射", () => {
 
   it("Skyreach = 通天峰（用户实测反馈，已收录）", () => {
     expect(translateDungeonName("Skyreach")).toBe("通天峰");
-    expect(dungeonDisplayName("Skyreach")).toBe("通天峰（Skyreach）");
+    expect(dungeonDisplayName("Skyreach")).toBe("通天峰");
+  });
+});
+
+describe("副本名语言切换（zh/en）", () => {
+  it("zh 模式纯中文，未命中回退原文", () => {
+    expect(dungeonDisplayName("Altar of Fangs", "zh")).toBe("毒牙祭坛");
+    expect(dungeonDisplayName("Some Brand New Dungeon", "zh")).toBe("Some Brand New Dungeon");
+  });
+
+  it("en 模式纯英文（规范原名），未命中回退原文", () => {
+    expect(dungeonDisplayName("Altar of Fangs", "en")).toBe("Altar of Fangs");
+    expect(dungeonDisplayName("Some Brand New Dungeon", "en")).toBe("Some Brand New Dungeon");
+  });
+
+  it("Kings' Rest（撇号在 s 后）归一化命中诸王之眠", () => {
+    expect(translateDungeonName("Kings' Rest")).toBe("诸王之眠");
+    expect(dungeonDisplayName("Kings' Rest", "zh")).toBe("诸王之眠");
+    expect(dungeonDisplayName("Kings' Rest", "en")).toBe("King's Rest"); // en 模式归一化为规范拼写
+  });
+
+  it("连字符变体也能命中（Nexus-Point Xenas）", () => {
+    expect(translateDungeonName("Nexus-Point Xenas")).toBe("节点希纳斯");
+    expect(translateDungeonName("Nexus Point Xenas")).toBe("节点希纳斯");
   });
 });

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
+import { LangProvider } from "@/components/LangProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -21,19 +22,21 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="zh-CN">
       <body>
-        <div className="container">
-          <TopBar />
-          {children}
-        </div>
-        <div className="container">
-          <footer className="footer-note">
-            非暴雪官方产品，与暴雪娱乐无关。本项目仅用于个人学习与分析，不销售任何游戏内容。
-            <br />
-            <Link href="/legal/privacy">隐私政策</Link> ·{" "}
-            <Link href="/legal/terms">用户协议</Link> ·{" "}
-            <Link href="/legal/disclaimer">免责声明</Link>
-          </footer>
-        </div>
+        <LangProvider>
+          <div className="container">
+            <TopBar />
+            {children}
+          </div>
+          <div className="container">
+            <footer className="footer-note">
+              非暴雪官方产品，与暴雪娱乐无关。本项目仅用于个人学习与分析，不销售任何游戏内容。
+              <br />
+              <Link href="/legal/privacy">隐私政策</Link> ·{" "}
+              <Link href="/legal/terms">用户协议</Link> ·{" "}
+              <Link href="/legal/disclaimer">免责声明</Link>
+            </footer>
+          </div>
+        </LangProvider>
       </body>
     </html>
   );
