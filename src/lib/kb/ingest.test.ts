@@ -182,15 +182,17 @@ describe("入库管线（幂等 + 双源目录）", () => {
 });
 
 describe("初始知识库内容合规（T18）", () => {
-  it("kb/sources 全部文件：frontmatter 合规、每文件 ≥10 条、patch=12.1、出处 http(s)", async () => {
+  it("kb/sources 全部文件：frontmatter 合规、patch=12.1、出处 http(s)、片段条数达标", async () => {
     const sourcesDir = path.join(process.cwd(), "kb", "sources");
     const files = (await fs.readdir(sourcesDir)).filter((f) => f.endsWith(".md"));
-    expect(files.length).toBeGreaterThanOrEqual(3); // 3 个专精
+    expect(files.length).toBeGreaterThanOrEqual(3); // 至少 3 个专精
     for (const f of files) {
       const parsed = parseKbFile(f, await fs.readFile(path.join(sourcesDir, f), "utf8"));
       expect(parsed.meta.patch, `${f} patch`).toBe("12.1");
       expect(parsed.meta.source_url, `${f} source_url`).toMatch(/^https?:\/\//);
-      expect(parsed.chunks.length, `${f} 条目数 ≥10`).toBeGreaterThanOrEqual(10);
+      // intent_pattern 类源文件内容详尽（≥10 节）；set_bonus 类仅含 2/4 件套等少量节
+      const minChunks = parsed.meta.type === "intent_pattern" ? 10 : 2;
+      expect(parsed.chunks.length, `${f} 条目数 ≥${minChunks}`).toBeGreaterThanOrEqual(minChunks);
       for (const c of parsed.chunks) {
         // 要点摘要而非整篇搬运：单条 ≤1200 字符
         expect(c.text.length).toBeLessThanOrEqual(1200);
