@@ -3,17 +3,28 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useTurnstile } from "@/lib/client/useTurnstile";
-import { parseMagicLinkToken, readLastEmail, writeLastEmail } from "@/lib/auth/magic-link";
+import {
+  parseMagicLinkSource,
+  readLastEmail,
+  writeLastEmail,
+} from "@/lib/auth/magic-link";
+import {
+  LOGIN_EMAIL_SEND_LABEL,
+  LOGIN_LINK_RESEND_HINT,
+  LOGIN_LINK_SENT_MESSAGE,
+  nextStepAfterSend,
+} from "@/lib/auth/login-flow";
 
 /**
- * 登录页（T12，FR-7）：邮箱 + 验证码（无密码）。
- * mock 模式提示验证码在服务端控制台日志中查看。
+ * 登录页（T12，FR-7）：统一为「邮箱链接登录」——输邮箱 → 发送登录链接 → 点击邮件链接完成。
+ * 生产（Supabase）不再要求输 6 位验证码；仅本地 mock 开发模式（无 Supabase 密钥、
+ * 发 6 位验证码）保留输码步骤。
  */
 export default function LoginForm() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
-  const [step, setStep] = useState<"email" | "code">("email");
+  const [step, setStep] = useState<"email" | "sent" | "code">("email");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [mockHint, setMockHint] = useState("");
@@ -25,18 +36,21 @@ export default function LoginForm() {
   // 可见的 managed widget：用户能看到并可交互（若有挑战可点击），token 由 callback 存储
   const { containerRef, getToken, configured } = useTurnstile("login", "managed");
 
-  // 魔法链接自动登录：生产 Supabase 对新用户首次登录发 sign-in 链接，
-  // 用户点击后带 ?token_hash=...（老形式 ?code=...）回到本页 → 直接建立会话。
+  // 魔法链接自动登录：用户点击邮件链接后带 ?token_hash=...（老形式 ?code=...）
+  // 回到本页 → 直接建立会话。source 一并上报，供服务端对老形式 ?code= 做 signup 回退。
   useEffect(() => {
     if (linkAttempted.current) return;
-    const tokenHash = parseMagicLinkToken(window.location.search);
-    if (!tokenHash) return;
+    const parsed = parseMagicLinkSource(window.location.search);
+    if (!parsed) return;
     linkAttempted.current = true;
     setLinkBusy(true);
     setBusy(true);
 
     const lastEmail = readLastEmail();
-    const body: { tokenHash: string; email?: string } = { tokenHash };
+    const body: { tokenHash: string; source: "token_hash" | "code"; email?: string } = {
+      tokenHash: parsed.tokenHash,
+      source: parsed.source,
+    };
     if (lastEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lastEmail)) {
       body.email = lastEmail;
     }
@@ -64,6 +78,13 @@ export default function LoginForm() {
     })();
   }, [router]);
 
+  // 重新发送倒计时（60 秒后恢复可用）
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const id = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(id);
+  }, [countdown]);
+
   const requestCode = async () => {
     setError("");
     setMockHint("");
@@ -82,7 +103,8 @@ export default function LoginForm() {
       });
       const data = await res.json();
       if (!data.ok) return setError(data.error ?? "发送失败，请稍后重试");
-      setStep("code");
+      // 生产 → 提示查收链接；mock → 保留输码
+      setStep(nextStepAfterSend(Boolean(data.mockMode)));
       if (data.mockHint) setMockHint(data.mockHint);
       setCountdown(60);
     } catch {
@@ -118,13 +140,22 @@ export default function LoginForm() {
       <div className="card login-card">
         <h1>登录 / 注册</h1>
         <p className="login-sub">
-          无需密码：输入邮箱，我们会发送 6 位验证码（10 分钟内有效，可重发）。
+          无需密码：输入邮箱，我们会发送登录链接（10 分钟内有效，可重发）。
           登录后可保存历史复盘并使用每日 3 次免费额度。
         </p>
 
         {error && <div className="alert alert-error">{error}</div>}
         {linkBusy && <div className="alert alert-info">正在登录…</div>}
         {mockHint && <div className="alert alert-info">{mockHint}</div>}
+        {step === "sent" && (
+          <div className="alert alert-info">
+            {LOGIN_LINK_SENT_MESSAGE}
+            <div className="login-resend-hint">
+              {LOGIN_LINK_RESEND_HINT}
+              {countdown > 0 ? `（${countdown}s 后可重新发送）` : ""}
+            </div>
+          </div>
+        )}
 
         <div className="login-form">
           <div className="field">
@@ -160,11 +191,28 @@ export default function LoginForm() {
           )}
 
           <div className="login-actions">
-            {step === "email" ? (
+            {step === "email" && (
               <button className="btn btn-primary" disabled={busy} onClick={requestCode}>
-                {busy ? <span className="spinner" /> : "发送验证码"}
+                {busy ? <span className="spinner" /> : LOGIN_EMAIL_SEND_LABEL}
               </button>
-            ) : (
+            )}
+
+            {step === "sent" && (
+              <>
+                <button
+                  className="btn btn-primary"
+                  disabled={busy || countdown > 0}
+                  onClick={requestCode}
+                >
+                  重新发送
+                </button>
+                <button className="btn" onClick={() => setStep("email")}>
+                  更换邮箱
+                </button>
+              </>
+            )}
+
+            {step === "code" && (
               <>
                 <button className="btn btn-primary" disabled={busy} onClick={verifyCode}>
                   {busy ? <span className="spinner" /> : "登录"}

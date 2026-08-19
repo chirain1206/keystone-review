@@ -24,8 +24,14 @@ export interface AuthProvider {
    * 校验邮箱魔法链接 token_hash（生产 Supabase 对新用户首次登录发 sign-in 链接，
    * 回调 ?token_hash=...&type=email / 老形式 ?code=...）；成功则建立会话并返回用户。
    * email 为可选兼容提示（前端 localStorage 最近邮箱），实现层以 token_hash 为准。
+   * source 标记 token 来源（token_hash/code）：老形式 ?code= 类型歧义，email 验证
+   * 失败时服务端可回退 type:"signup" 兼容「确认注册链接」。
    */
-  verifyLink(tokenHash: string, email?: string): Promise<{ ok: boolean; user?: AuthUser; error?: string }>;
+  verifyLink(
+    tokenHash: string,
+    email?: string,
+    source?: "token_hash" | "code",
+  ): Promise<{ ok: boolean; user?: AuthUser; error?: string }>;
   /** 读取当前会话用户（无会话返回 null） */
   getSession(): Promise<AuthUser | null>;
   /** 登出并清除会话 */

@@ -11,17 +11,32 @@
 /** localStorage 键：最近一次请求登录使用的邮箱。 */
 export const LAST_EMAIL_KEY = "wow-analyzer:last-email";
 
+/** 魔法链接 token 来源：新形式 ?token_hash=...，老形式 ?code=...。 */
+export type MagicLinkSource = "token_hash" | "code";
+
+/**
+ * 解析魔法链接回调 query 并区分来源：
+ *  - 新形式 token_hash → source:"token_hash"（sign-in 链接，type 确定）
+ *  - 老形式 code → source:"code"（类型歧义：可能是 sign-in 或 sign-up 链接）
+ * 无 / 空参数返回 null。
+ */
+export function parseMagicLinkSource(
+  search: string,
+): { tokenHash: string; source: MagicLinkSource } | null {
+  const params = new URLSearchParams(search);
+  const tokenHash = params.get("token_hash")?.trim();
+  if (tokenHash) return { tokenHash, source: "token_hash" };
+  const code = params.get("code")?.trim();
+  if (code) return { tokenHash: code, source: "code" };
+  return null;
+}
+
 /**
  * 解析魔法链接回调 query：取 token_hash（新）或 code（老）作为 token_hash 等价物。
  * 无 / 空参数返回 null。
  */
 export function parseMagicLinkToken(search: string): string | null {
-  const params = new URLSearchParams(search);
-  const tokenHash = params.get("token_hash")?.trim();
-  if (tokenHash) return tokenHash;
-  const code = params.get("code")?.trim();
-  if (code) return code;
-  return null;
+  return parseMagicLinkSource(search)?.tokenHash ?? null;
 }
 
 /** 登录魔法链接失效 / 过期的友好提示文案。 */

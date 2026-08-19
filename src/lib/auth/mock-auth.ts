@@ -99,6 +99,7 @@ export class MockAuthProvider implements AuthProvider {
   async verifyLink(
     _tokenHash: string,
     _email?: string,
+    _source?: "token_hash" | "code",
   ): Promise<{ ok: boolean; user?: AuthUser; error?: string }> {
     // mock 模式发送 6 位验证码（无魔法链接），token_hash 无对应凭据可验证
     return { ok: false, error: "链接已失效，请重新登录" };

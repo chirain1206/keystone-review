@@ -65,7 +65,7 @@ describe("EMAIL_MODE 发码分支选择", () => {
     delete process.env.EMAIL_MODE;
   });
 
-  it("supabase 模式（默认）：requestCode 走 signInWithOtp，不落地本地验证码", async () => {
+  it("supabase 模式（默认）：requestCode 走 signInWithOtp 并带 emailRedirectTo=/login，不落地本地验证码", async () => {
     delete process.env.EMAIL_MODE;
     signInWithOtp.mockClear();
     signInWithOtp.mockResolvedValue({ error: null });
@@ -78,7 +78,10 @@ describe("EMAIL_MODE 发码分支选择", () => {
     expect(signInWithOtp).toHaveBeenCalledTimes(1);
     expect(signInWithOtp).toHaveBeenCalledWith({
       email,
-      options: { shouldCreateUser: true },
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: "http://localhost:3000/login",
+      },
     });
     // 不落地本地验证码（与 resend 分支相反）
     expect(await getStoredCode(email)).toBeNull();

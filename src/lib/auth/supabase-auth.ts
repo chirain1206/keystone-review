@@ -19,11 +19,11 @@ import { sendVerificationCodeEmail } from "@/lib/email/provider";
 import { getRepo } from "@/lib/db";
 
 /**
- * 生产账号实现：Supabase passwordless 邮箱验证码 OTP。
+ * 生产账号实现：Supabase passwordless 邮箱链接登录（统一为 sign-in 链接，非验证码）。
  *
  * 发码（requestCode）按 EMAIL_MODE 分两种：
- *  - supabase（默认）：signInWithOtp —— 验证码由 Supabase Auth 自带邮件服务发出，
- *    无需任何 SMTP/Resend 配置（内测阶段无域名时用这个）。
+ *  - supabase（默认）：signInWithOtp（emailRedirectTo=/login）—— Supabase 自带邮件
+ *    服务发出 sign-in 链接，无需任何 SMTP/Resend 配置（内测阶段无域名时用这个）。
  *  - resend：本地生成 6 位验证码 → 存储（guard）→ 走 Resend REST 适配器发送
  *    （sendVerificationCodeEmail），验证时本地比对；会话用自有 cookie。
  *    买域名后可切回此模式（需 RESEND_API_KEY + EMAIL_FROM）。
@@ -97,9 +97,13 @@ export class SupabaseAuthProvider implements AuthProvider {
     }
 
     // supabase 模式：Supabase 自带邮件服务发送（无需 SMTP/Resend 配置）
+    // emailRedirectTo 固定跳回 /login 回调，Supabase 稳定发 sign-in 链接而非验证码。
     const { error } = await this.client().auth.signInWithOtp({
       email,
-      options: { shouldCreateUser: true },
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: `${envConfig.appUrl}/login`,
+      },
     });
     if (error) {
       if (error.status === 429) {
@@ -151,30 +155,43 @@ export class SupabaseAuthProvider implements AuthProvider {
   }
 
   /**
-   * 邮箱魔法链接登录（FR-7 增强）：生产 Supabase 对新用户首次登录发送的是
-   * sign-in 链接（而非 6 位验证码），用户点击后带 ?token_hash=... 回到站点。
+   * 邮箱魔法链接登录（FR-7 增强，统一为链接登录）：生产 Supabase 发送 sign-in
+   * 链接，用户点击后带 ?token_hash=...&type=email（老形式 ?code=...）回到站点。
    * 这里用 verifyOtp({ type: "email", token_hash }) 完成会话建立（cookie 由
    * createServerClient 桥接写入 res）。
    *
    * 优先 token_hash 验证；email 仅作兼容提示（老版本 gotrue 若要求 email 时
-   * 一并带上，运行时 token_hash 优先、email 无害）。resend 模式发送的是
-   * 6 位验证码（无魔法链接），token_hash 不可验证 → 直接判失效。
+   * 一并带上，运行时 token_hash 优先、email 无害）。
+   *
+   * 老形式 ?code= 类型歧义：既可能是 sign-in 也可能是 sign-up（确认注册）链接。
+   * 当 type:"email" 验证失败（token 过期/无效）且来源为 ?code= 时，回退
+   * type:"signup" 再试一次，把「确认注册链接」也纳入自动登录。
+   *
+   * resend 模式发送的是 6 位验证码（无魔法链接），token_hash 不可验证 → 直接判失效。
    */
   async verifyLink(
     tokenHash: string,
     email?: string,
+    source?: "token_hash" | "code",
   ): Promise<{ ok: boolean; user?: AuthUser; error?: string }> {
     if (this.emailMode === "resend") {
       return { ok: false, error: "链接已失效，请重新登录" };
     }
 
-    const params: { type: "email"; token_hash: string; email?: string } = {
-      type: "email",
-      token_hash: tokenHash,
+    const attempt = (type: "email" | "signup") => {
+      const params: { type: "email" | "signup"; token_hash: string; email?: string } = {
+        type,
+        token_hash: tokenHash,
+      };
+      if (email) params.email = email;
+      return this.client().auth.verifyOtp(params as VerifyOtpParams);
     };
-    if (email) params.email = email;
 
-    const { data, error } = await this.client().auth.verifyOtp(params as VerifyOtpParams);
+    let { data, error } = await attempt("email");
+    if ((error || !data.user) && source === "code") {
+      ({ data, error } = await attempt("signup"));
+    }
+
     if (error || !data.user) {
       return { ok: false, error: "链接已失效，请重新登录" };
     }

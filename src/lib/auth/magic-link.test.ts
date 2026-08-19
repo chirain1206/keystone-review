@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AUTH_LINK_EXPIRED_MESSAGE,
   parseAuthLinkError,
+  parseMagicLinkSource,
   parseMagicLinkToken,
 } from "@/lib/auth/magic-link";
 
@@ -38,6 +39,40 @@ describe("parseMagicLinkToken（魔法链接回调参数解析）", () => {
 
   it("忽略 token_hash 前后空白", () => {
     expect(parseMagicLinkToken("?token_hash=%20abc%20")).toBe("abc");
+  });
+});
+
+/**
+ * parseMagicLinkSource：区分 token 来源（token_hash vs code），
+ * 供服务端对老形式 ?code= 做 signup 回退。
+ */
+describe("parseMagicLinkSource（回调参数来源解析）", () => {
+  it("新形式 token_hash → source=token_hash", () => {
+    expect(parseMagicLinkSource("?token_hash=abc123&type=email")).toEqual({
+      tokenHash: "abc123",
+      source: "token_hash",
+    });
+  });
+
+  it("老形式 code → source=code", () => {
+    expect(parseMagicLinkSource("?code=legacy-token")).toEqual({
+      tokenHash: "legacy-token",
+      source: "code",
+    });
+  });
+
+  it("token_hash 优先于 code", () => {
+    expect(parseMagicLinkSource("?token_hash=new&code=old")).toEqual({
+      tokenHash: "new",
+      source: "token_hash",
+    });
+  });
+
+  it("无任何参数 / 空值 → null", () => {
+    expect(parseMagicLinkSource("")).toBeNull();
+    expect(parseMagicLinkSource("?type=email")).toBeNull();
+    expect(parseMagicLinkSource("?token_hash=")).toBeNull();
+    expect(parseMagicLinkSource("?code=%20%20")).toBeNull();
   });
 });
 

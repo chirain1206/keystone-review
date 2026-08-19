@@ -67,6 +67,54 @@ describe("SupabaseAuthProvider.verifyLink（魔法链接）", () => {
     expect(verifyOtp).toHaveBeenCalledWith({ type: "email", token_hash: "tok2", email: "b@c.com" });
   });
 
+  it("code 来源 + email 验证失败 → 回退 signup 并建立会话（确认注册链接）", async () => {
+    verifyOtp.mockReset();
+    verifyOtp
+      .mockResolvedValueOnce({ data: { user: null }, error: { status: 403, code: "otp_expired" } })
+      .mockResolvedValueOnce({ data: { user: { id: "u3", email: "c@d.com" } }, error: null });
+
+    const r = await makeProvider().verifyLink("code-token", undefined, "code");
+
+    expect(r.ok).toBe(true);
+    expect(r.user).toEqual({ id: "u3", email: "c@d.com" });
+    expect(verifyOtp).toHaveBeenCalledTimes(2);
+    expect(verifyOtp).toHaveBeenNthCalledWith(1, { type: "email", token_hash: "code-token" });
+    expect(verifyOtp).toHaveBeenNthCalledWith(2, { type: "signup", token_hash: "code-token" });
+  });
+
+  it("token_hash 来源 + email 验证失败 → 不回退 signup（仅一次调用）", async () => {
+    verifyOtp.mockReset();
+    verifyOtp.mockResolvedValue({ data: { user: null }, error: { status: 403, code: "otp_expired" } });
+
+    const r = await makeProvider().verifyLink("th", undefined, "token_hash");
+
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe("链接已失效，请重新登录");
+    expect(verifyOtp).toHaveBeenCalledTimes(1);
+    expect(verifyOtp).toHaveBeenCalledWith({ type: "email", token_hash: "th" });
+  });
+
+  it("无 source（缺省）+ email 验证失败 → 不回退 signup（保持旧行为）", async () => {
+    verifyOtp.mockReset();
+    verifyOtp.mockResolvedValue({ data: { user: null }, error: { status: 403, code: "otp_expired" } });
+
+    const r = await makeProvider().verifyLink("th");
+
+    expect(r.ok).toBe(false);
+    expect(verifyOtp).toHaveBeenCalledTimes(1);
+  });
+
+  it("code 来源但 email 验证成功 → 不触发 signup 回退（仅一次调用）", async () => {
+    verifyOtp.mockReset();
+    verifyOtp.mockResolvedValue({ data: { user: { id: "u4", email: "d@e.com" } }, error: null });
+
+    const r = await makeProvider().verifyLink("code-ok", undefined, "code");
+
+    expect(r.ok).toBe(true);
+    expect(verifyOtp).toHaveBeenCalledTimes(1);
+    expect(verifyOtp).toHaveBeenCalledWith({ type: "email", token_hash: "code-ok" });
+  });
+
   it("失效：verifyOtp 报错 → ok=false 提示链接失效", async () => {
     verifyOtp.mockReset();
     verifyOtp.mockResolvedValue({ data: { user: null }, error: { status: 403 } });
