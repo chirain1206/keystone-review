@@ -22,6 +22,8 @@ export interface WclFight {
   playerName: string; // 报告主角（best-effort）
   playerClass: string;
   playerSpec: string;
+  /** 链接 ?fight=N 指定的场次，作为前端默认选中/高亮（不丢失其余场次）。 */
+  selected?: boolean;
 }
 
 export interface WclReportMeta {
@@ -41,14 +43,48 @@ export type WclResult =
 const REPORT_URL_RE =
   /^https:\/\/(?:(?:www|cn)\.)?warcraftlogs\.com\/reports\/([A-Za-z0-9]+)\/?(?:#[\w=-]+)?(?:\?.*)?$/i;
 
-export function parseWclUrl(url: string): { ok: boolean; code?: string; region?: "www" | "cn" } {
-  const m = REPORT_URL_RE.exec(url.trim());
+/** 从链接提取 ?fight=N（查询参数优先）或 #fight=N（旧版 hash）的场次 id。 */
+function extractFight(url: string): number | undefined {
+  const q = /[?&]fight=(\d+)/i.exec(url);
+  const h = /#fight=(\d+)/i.exec(url);
+  const raw = q?.[1] ?? h?.[1];
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+export function parseWclUrl(url: string): {
+  ok: boolean;
+  code?: string;
+  region?: "www" | "cn";
+  fight?: number;
+} {
+  const trimmed = url.trim();
+  const m = REPORT_URL_RE.exec(trimmed);
   if (!m) return { ok: false };
   return {
     ok: true,
     code: m[1],
-    region: /cn\.warcraftlogs\.com/i.test(url) ? "cn" : "www",
+    region: /cn\.warcraftlogs\.com/i.test(trimmed) ? "cn" : "www",
+    fight: extractFight(trimmed),
   };
+}
+
+/**
+ * 从一场报告的多场大秘境中选出要复盘的那场（FR-1/FR-3 默认选中）：
+ *  1) 显式 fightId（来自请求体）命中 → 用它；
+ *  2) 链接 ?fight=N 标记的 selected 场次 → 默认选中；
+ *  3) 否则取层数最高的一场（保持历史行为）。
+ */
+export function selectFight(fights: WclFight[], requestedId?: number): WclFight | undefined {
+  if (fights.length === 0) return undefined;
+  if (requestedId !== undefined) {
+    const byId = fights.find((f) => f.id === requestedId);
+    if (byId) return byId;
+  }
+  const selected = fights.find((f) => f.selected);
+  if (selected) return selected;
+  return [...fights].sort((a, b) => (b.keystoneLevel ?? 0) - (a.keystoneLevel ?? 0))[0];
 }
 
 // ---------- 真实 API ----------
@@ -251,7 +287,13 @@ export async function getWclReportMeta(url: string): Promise<WclResult> {
             : "该报告中没有可分析的大秘境战斗",
       };
     }
-    return { ok: true, meta: { ...meta, fights: mythicFights } };
+    // 链接 ?fight=N 指定的场次标记为 selected（默认选中，不丢失其余场次）
+    const requestedFight = parsed.fight;
+    const fights =
+      requestedFight !== undefined
+        ? mythicFights.map((f) => ({ ...f, selected: f.id === requestedFight }))
+        : mythicFights;
+    return { ok: true, meta: { ...meta, fights } };
   } catch (err) {
     if (err instanceof Error && /不存在|过期|invalid|not found/i.test(err.message)) {
       return { ok: false, code: "INVALID_LINK", message: "链接无效或报告已过期，请检查后重试" };

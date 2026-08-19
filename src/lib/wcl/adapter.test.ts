@@ -1,11 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import { getAccessToken, getWclReportMeta, parseWclUrl } from "@/lib/wcl/adapter";
+import {
+  getAccessToken,
+  getWclReportMeta,
+  parseWclUrl,
+  selectFight,
+  type WclFight,
+} from "@/lib/wcl/adapter";
 
 /**
  * T8 验收（FR-1/FR-3）：
  *  - www / cn 双域链接识别与元数据拉取
  *  - 无效链接 / 团本链接的明确中文提示
  *  - 失败降级不抛异常
+ *  - ?fight=N 场次参数解析与默认选中（本地验收缺陷修复）
  */
 describe("WCL 链接解析", () => {
   it("www 与 cn 链接均解析出 report code", () => {
@@ -14,10 +21,74 @@ describe("WCL 链接解析", () => {
     expect(parseWclUrl("https://cn.warcraftlogs.com/reports/XYZ987").region).toBe("cn");
   });
 
+  it("提取 ?fight=N 查询参数（数字）", () => {
+    const r = parseWclUrl(
+      "https://www.warcraftlogs.com/reports/47pvKM3LkhnXyDwd?fight=11&type=damage-done",
+    );
+    expect(r.ok).toBe(true);
+    expect(r.code).toBe("47pvKM3LkhnXyDwd");
+    expect(r.fight).toBe(11);
+  });
+
+  it("兼容旧版 #fight=N hash 片段", () => {
+    expect(parseWclUrl("https://www.warcraftlogs.com/reports/AbC123#fight=7").fight).toBe(7);
+  });
+
+  it("无 fight 参数时返回 undefined（行为不变）", () => {
+    expect(parseWclUrl("https://www.warcraftlogs.com/reports/AbC123").fight).toBeUndefined();
+    expect(
+      parseWclUrl("https://www.warcraftlogs.com/reports/AbC123?type=damage-done").fight,
+    ).toBeUndefined();
+    expect(parseWclUrl("https://www.warcraftlogs.com/reports/AbC123?fight=abc").fight).toBeUndefined();
+  });
+
   it("非 WCL 链接被拒绝", () => {
     expect(parseWclUrl("https://example.com/reports/abc").ok).toBe(false);
     expect(parseWclUrl("随便一段文字").ok).toBe(false);
     expect(parseWclUrl("https://warcraftlogs.com/login").ok).toBe(false);
+  });
+});
+
+describe("WCL 场次默认选中（selectFight）", () => {
+  const fights: WclFight[] = [
+    {
+      id: 7,
+      name: "Mists of Tirna Scithe",
+      difficulty: 8,
+      keystoneLevel: 15,
+      affixes: [],
+      success: true,
+      durationSec: 1650,
+      playerName: "P",
+      playerClass: "Mage",
+      playerSpec: "Fire",
+    },
+    {
+      id: 11,
+      name: "Grim Batol",
+      difficulty: 8,
+      keystoneLevel: 12,
+      affixes: [],
+      success: false,
+      durationSec: 1830,
+      playerName: "P",
+      playerClass: "Mage",
+      playerSpec: "Fire",
+      selected: true,
+    },
+  ];
+
+  it("selected 场次优先于最高层数", () => {
+    expect(selectFight(fights)?.id).toBe(11);
+  });
+
+  it("显式 fightId 命中时优先于 selected", () => {
+    expect(selectFight(fights, 7)?.id).toBe(7);
+  });
+
+  it("无 selected 时回退到最高层数（历史行为）", () => {
+    const noSelected = fights.map((f) => ({ ...f, selected: false }));
+    expect(selectFight(noSelected)?.id).toBe(7);
   });
 });
 
@@ -54,6 +125,25 @@ describe("WCL 元数据（mock 适配器）", () => {
   it("国服链接同样可用（mock 语义一致）", async () => {
     const r = await getWclReportMeta("https://cn.warcraftlogs.com/reports/CnDemo");
     expect(r.ok).toBe(true);
+  });
+
+  it("?fight=N 标记对应场次为 selected 且不丢失其他场次", async () => {
+    const r = await getWclReportMeta("https://www.warcraftlogs.com/reports/MplusDemo?fight=9");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.meta.fights).toHaveLength(2);
+      const selected = r.meta.fights.filter((f) => f.selected);
+      expect(selected.map((f) => f.id)).toEqual([9]);
+      expect(r.meta.fights.map((f) => f.id).sort((a, b) => a - b)).toEqual([7, 9]);
+    }
+  });
+
+  it("无 fight 参数时无 selected 标记（行为不变）", async () => {
+    const r = await getWclReportMeta("https://www.warcraftlogs.com/reports/MplusDemo");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.meta.fights.some((f) => f.selected)).toBe(false);
+    }
   });
 });
 

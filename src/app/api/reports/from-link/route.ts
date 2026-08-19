@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth/provider";
 import { getRepo } from "@/lib/db";
-import { getWclReportMeta } from "@/lib/wcl/adapter";
+import { getWclReportMeta, selectFight } from "@/lib/wcl/adapter";
 import type { ProcessedLog } from "@/lib/parser/schema";
 import { estimateProcessedLogTokens } from "@/lib/ai/tokens";
 import { enforceCreateLimits } from "@/lib/quota/enforce";
@@ -48,9 +48,13 @@ export async function POST(req: NextRequest) {
     const status = metaResult.code === "FETCH_FAILED" ? 502 : 400;
     return NextResponse.json({ ok: false, code: metaResult.code, error: metaResult.message }, { status });
   }
-  const fight =
-    metaResult.meta.fights.find((f) => f.id === fightId) ??
-    metaResult.meta.fights.sort((a, b) => (b.keystoneLevel ?? 0) - (a.keystoneLevel ?? 0))[0];
+  const fight = selectFight(metaResult.meta.fights, fightId);
+  if (!fight) {
+    return NextResponse.json(
+      { ok: false, code: "NO_MYTHIC_FIGHT", error: "该报告中没有可分析的大秘境战斗" },
+      { status: 400 },
+    );
+  }
   const isMock = metaResult.meta.isMock === true;
 
   // 对比基准（失败降级，不阻塞）
