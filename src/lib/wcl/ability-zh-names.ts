@@ -373,6 +373,9 @@ const ALL_ENTRIES: AbilityNameEntry[] = [
   ...EFFECT_ENTRIES,
 ];
 
+/** 全部专有名词条目（供术语词典 term-dict 等复用英文→中文标准名基础）。 */
+export const ABILITY_NAME_ENTRIES: AbilityNameEntry[] = ALL_ENTRIES;
+
 /** 归一化键：小写 + 去除空格/连字符/下划线/撇号/逗号/冒号，兼容 WCL 与多套写法。 */
 function normalizeKey(name: string): string {
   return name
