@@ -11,12 +11,11 @@ import { classDisplayName, specDisplayName } from "@/lib/wcl/class-spec-names";
 import { filterPlayersByFight } from "@/lib/wcl/players";
 import { shouldShowFightSelector } from "@/lib/wcl/link-preview";
 import {
-  formatDurationSec,
-  formatPercent,
-  formatPerformance,
-  formatRouteSimilarity,
+  buildLevelRange,
+  buildRecommendationRow,
   sortRecommendations,
 } from "@/lib/wcl/recommend-format";
+import { useLang } from "@/components/LangProvider";
 
 /** from-link 预览返回的战斗与角色。 */
 interface LinkFight {
@@ -70,6 +69,7 @@ interface Recommendation {
 export default function HomeUpload() {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
+  const { lang } = useLang();
 
   const [mode, setMode] = useState<"link" | "file">("link");
   const [linkUrl, setLinkUrl] = useState("");
@@ -405,7 +405,7 @@ export default function HomeUpload() {
                               onChange={() => onFightSelect(f.id)}
                             />
                           </td>
-                          <td>{dungeonDisplayName(f.name)}</td>
+                          <td>{dungeonDisplayName(f.name, lang)}</td>
                           <td>{f.level ?? "-"}</td>
                           <td>
                             {Math.floor(f.durationSec / 60)} 分 {f.durationSec % 60} 秒
@@ -449,8 +449,8 @@ export default function HomeUpload() {
                         {p.name}
                         {p.isUploader && <span style={{ marginLeft: 6, fontSize: 12 }}>📤 上传者</span>}
                       </td>
-                      <td>{classDisplayName(p.class)}</td>
-                      <td>{p.spec === "Unknown" ? "待确认" : specDisplayName(p.spec)}</td>
+                      <td>{classDisplayName(p.class, lang)}</td>
+                      <td>{p.spec === "Unknown" ? "待确认" : specDisplayName(p.spec, lang)}</td>
                       <td>
                         {p.role === "tank" ? "坦克" : p.role === "healer" ? "治疗" : p.role === "dps" ? "输出" : "-"}
                       </td>
@@ -478,61 +478,64 @@ export default function HomeUpload() {
                     )}
                   </div>
                   {recommendations && recommendations.length > 0 && (
-                    <table className="list" style={{ marginTop: 8 }}>
-                      <thead>
-                        <tr>
-                          <th></th>
-                          <th>副本</th>
-                          <th>层数</th>
-                          <th>该专精表现</th>
-                          <th>阵容相似</th>
-                          <th>路线相似</th>
-                          <th>时长</th>
-                          <th>结果</th>
-                          <th>日志</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {recommendations.map((c) => (
-                          <tr
+                    <div className="rec-list" style={{ marginTop: 8 }}>
+                      <div className="rec-summary">
+                        {dungeonDisplayName(selectedFight?.name ?? recommendations[0].dungeon, lang)} ·{" "}
+                        {buildLevelRange(recommendations.map((c) => c.level))} 层
+                      </div>
+                      {recommendations.map((c) => {
+                        const row = buildRecommendationRow(c);
+                        return (
+                          <div
                             key={c.code}
-                            style={{ cursor: "pointer" }}
+                            className="rec-row"
                             onClick={() => pickRecommendation(c)}
                           >
-                            <td>
-                              <input
-                                type="radio"
-                                name="compare-target"
-                                checked={compareUrl === c.url}
-                                onChange={() => pickRecommendation(c)}
-                              />
-                            </td>
-                            <td>{dungeonDisplayName(c.dungeon)}</td>
-                            <td>{c.level ?? "-"}</td>
-                            <td>{formatPerformance(c.keyPercent, c.parsePercent, c.amount, c.metricName)}</td>
-                            <td>{formatPercent(c.compSimilarity)}</td>
-                            <td>{formatRouteSimilarity(c.routeSimilarity)}</td>
-                            <td>{formatDurationSec(c.durationSec)}</td>
-                            <td>
-                              <span className={`badge ${c.success ? "badge-ok" : "badge-err"}`}>
-                                {c.success ? "限时" : "超时"}
-                              </span>
-                            </td>
-                            <td>
-                              <a
-                                href={c.url}
-                                target="_blank"
-                                rel="noreferrer noopener"
-                                onClick={(e) => e.stopPropagation()}
-                                style={{ color: "var(--accent, #3b82f6)" }}
-                              >
-                                打开 WCL ↗
-                              </a>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                            <input
+                              type="radio"
+                              name="compare-target"
+                              checked={compareUrl === c.url}
+                              onChange={() => pickRecommendation(c)}
+                            />
+                            <span className="rec-level">{row.level} 层</span>
+                            <span className="rec-perf">
+                              {row.performance.key ? (
+                                <>
+                                  <strong className="rec-key">{row.performance.key}</strong>
+                                  {row.performance.secondary ? (
+                                    <small className="rec-secondary">
+                                      {" "}
+                                      · {row.performance.secondary}
+                                    </small>
+                                  ) : null}
+                                </>
+                              ) : (
+                                row.performance.dps ?? "—"
+                              )}
+                            </span>
+                            <span className="rec-sim">
+                              <span className="rec-lbl">阵容</span> {row.comp}
+                            </span>
+                            <span className="rec-sim">
+                              <span className="rec-lbl">路线</span> {row.route}
+                            </span>
+                            <span className="rec-dur">{row.duration}</span>
+                            <span className={`badge ${c.success ? "badge-ok" : "badge-err"}`}>
+                              {c.success ? "限时" : "超时"}
+                            </span>
+                            <a
+                              className="rec-link"
+                              href={c.url}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              打开 WCL ↗
+                            </a>
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                   {recommendations && recommendations.length === 0 && !recommendBusy && (
                     <p style={{ color: "var(--text-dim)", fontSize: 13, marginTop: 8 }}>
@@ -616,7 +619,7 @@ export default function HomeUpload() {
                           }}
                         />
                       </td>
-                      <td>{dungeonDisplayName(r.combat.dungeon)}</td>
+                      <td>{dungeonDisplayName(r.combat.dungeon, lang)}</td>
                       <td>{r.combat.level}</td>
                       <td>
                         {Math.floor(r.combat.durationSec / 60)} 分{" "}
@@ -635,7 +638,7 @@ export default function HomeUpload() {
               {selectedRun && (
                 <div style={{ marginTop: 12 }}>
                   <label className="label">
-                    你的职业：{classDisplayName(selectedRun.combat.playerClass)}（自动识别）；专精（请确认或修正）
+                    你的职业：{classDisplayName(selectedRun.combat.playerClass, lang)}（自动识别）；专精（请确认或修正）
                   </label>
                   <input
                     className="input"

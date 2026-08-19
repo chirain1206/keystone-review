@@ -76,6 +76,101 @@ export interface RecommendationLike {
 }
 
 /**
+ * 表现列（压缩两段式）：Key % 突出显示 + Parse %/DPS 小字灰显；无 Key % 时只显 DPS。
+ * 返回结构化字段供组件分样式渲染（Key % 高亮、次要信息灰显、纯 DPS 兜底）。
+ */
+export interface PerformanceCell {
+  /** 突出显示的 Key %（如 "Key % 88"）；无 Key % 时为 null。 */
+  key: string | null;
+  /** Key % 存在时的次要信息（"Parse % 96 · DPS 12.3k"，小字灰显）；无 Key % 时为 null。 */
+  secondary: string | null;
+  /** 无 Key % 时的 DPS 兜底（正常字号）；有 Key % 或全无数据时为 null。 */
+  dps: string | null;
+}
+
+/** 表现列压缩格式化（纯函数，便于单测）。 */
+export function buildPerformanceCell(
+  keyPercent: number | null,
+  parsePercent: number | null,
+  amount: number | null,
+  metricName?: string | null,
+): PerformanceCell {
+  const hasKey = keyPercent !== null && !Number.isNaN(keyPercent) && keyPercent > 0;
+  if (hasKey) {
+    const parts: string[] = [];
+    if (parsePercent !== null && !Number.isNaN(parsePercent) && parsePercent > 0) {
+      parts.push(`Parse % ${Math.round(parsePercent)}`);
+    }
+    const a = formatAmount(amount, metricName);
+    if (a !== "—") parts.push(a);
+    return {
+      key: `Key % ${Math.round(keyPercent)}`,
+      secondary: parts.length > 0 ? parts.join(" · ") : null,
+      dps: null,
+    };
+  }
+  const a = formatAmount(amount, metricName);
+  return { key: null, secondary: null, dps: a === "—" ? null : a };
+}
+
+/** 推荐行展示字段（"行渲染"纯函数输出，供组件直接渲染）。 */
+export interface RecommendationRow {
+  /** 层数文案（如 "10"）；缺失 → "—"。 */
+  level: string;
+  /** 该专精表现（Key % 突出 + Parse %/DPS 灰显 / 纯 DPS 兜底）。 */
+  performance: PerformanceCell;
+  /** 阵容相似度文案（如 "87%"；缺失 → "—"）。 */
+  comp: string;
+  /** 路线相似度文案（如 "60%"；缺失 → "路线暂无"）。 */
+  route: string;
+  /** 时长文案（如 "27 分 30 秒"）。 */
+  duration: string;
+  /** 是否限时。 */
+  success: boolean;
+}
+
+/** 推荐行输入的极简形状（与 HomeUpload 的 Recommendation 一致，仅取渲染所需字段）。 */
+export interface RecommendationRowInput {
+  level: number | null;
+  keyPercent: number | null;
+  parsePercent: number | null;
+  amount: number | null;
+  metricName: string | null;
+  compSimilarity: number | null;
+  routeSimilarity: number | null;
+  durationSec: number;
+  success: boolean;
+}
+
+/** 单行渲染纯函数（层数 | 表现 | 阵容相似 | 路线相似 | 时长 | 限时）。 */
+export function buildRecommendationRow(input: RecommendationRowInput): RecommendationRow {
+  return {
+    level: input.level !== null && input.level !== undefined ? String(input.level) : "—",
+    performance: buildPerformanceCell(
+      input.keyPercent,
+      input.parsePercent,
+      input.amount,
+      input.metricName,
+    ),
+    comp: formatPercent(input.compSimilarity),
+    route: formatRouteSimilarity(input.routeSimilarity),
+    duration: formatDurationSec(input.durationSec),
+    success: input.success,
+  };
+}
+
+/**
+ * 层数范围文案（目标摘要用）：去重升序后 "10–11"；单层 "10"；空 → "—"。
+ */
+export function buildLevelRange(levels: readonly (number | null)[]): string {
+  const nums = [...new Set(levels.filter((l): l is number => l !== null && l !== undefined && Number.isFinite(l)))]
+    .sort((a, b) => a - b);
+  if (nums.length === 0) return "—";
+  if (nums.length === 1) return String(nums[0]);
+  return `${nums[0]}–${nums[nums.length - 1]}`;
+}
+
+/**
  * 推荐列表排序（与后端 rankRecommendations 一致）：Key % 优先，相似度其次。
  * 主排序 = Key % 降序（缺失排最后，缺失时 DPS 兜底）；次排序 = 路线相似度；再次 = 阵容相似度。
  */

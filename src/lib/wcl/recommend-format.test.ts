@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildLevelRange,
+  buildPerformanceCell,
+  buildRecommendationRow,
   formatAmount,
   formatDurationSec,
   formatKeyPercent,
@@ -70,5 +73,74 @@ describe("sortRecommendations（Key % 优先，相似度其次）", () => {
     const list = [item("a", 88, 11_000, 0.8, 0.9)];
     sortRecommendations(list);
     expect(list[0].id).toBe("a");
+  });
+});
+
+describe("buildPerformanceCell（表现列压缩格式化）", () => {
+  it("有 Key %：Key 突出 + Parse %/DPS 灰显", () => {
+    expect(buildPerformanceCell(88, 96, 12_345, "dps")).toEqual({
+      key: "Key % 88",
+      secondary: "Parse % 96 · DPS 12.3k",
+      dps: null,
+    });
+  });
+
+  it("有 Key % 但无 Parse %：Key + DPS", () => {
+    expect(buildPerformanceCell(88, null, 12_345, "dps")).toEqual({
+      key: "Key % 88",
+      secondary: "DPS 12.3k",
+      dps: null,
+    });
+  });
+
+  it("无 Key %：只显 DPS（兜底）", () => {
+    expect(buildPerformanceCell(null, 96, 12_345, "dps")).toEqual({
+      key: null,
+      secondary: null,
+      dps: "DPS 12.3k",
+    });
+  });
+
+  it("全无数据：dps 为 null（渲染层回退「—」）", () => {
+    expect(buildPerformanceCell(null, null, null, "dps")).toEqual({
+      key: null,
+      secondary: null,
+      dps: null,
+    });
+  });
+});
+
+describe("buildRecommendationRow / buildLevelRange（行渲染）", () => {
+  const input = {
+    level: 10,
+    keyPercent: 88,
+    parsePercent: 96,
+    amount: 12_345,
+    metricName: "dps",
+    compSimilarity: 0.87,
+    routeSimilarity: 0.6,
+    durationSec: 1650,
+    success: true,
+  };
+
+  it("单行字段：层数/表现/阵容/路线/时长/限时", () => {
+    expect(buildRecommendationRow(input)).toEqual({
+      level: "10",
+      performance: { key: "Key % 88", secondary: "Parse % 96 · DPS 12.3k", dps: null },
+      comp: "87%",
+      route: "60%",
+      duration: "27 分 30 秒",
+      success: true,
+    });
+  });
+
+  it("层数缺失 → 「—」", () => {
+    expect(buildRecommendationRow({ ...input, level: null }).level).toBe("—");
+  });
+
+  it("层数范围：多值去重升序、单值、空", () => {
+    expect(buildLevelRange([10, 11, 10, null])).toBe("10–11");
+    expect(buildLevelRange([10])).toBe("10");
+    expect(buildLevelRange([null, null])).toBe("—");
   });
 });
