@@ -2,6 +2,12 @@ import { envConfig, requireProductionEnv } from "@/lib/env";
 import { buildPlayers, mockPlayers, type WclPlayer } from "@/lib/wcl/players";
 
 /**
+ * WCL v2 请求统一 User-Agent（WCL 对无 UA 的请求会返回 HTML 错误页）。
+ * 所有发往 *.warcraftlogs.com 的 fetch（OAuth + GraphQL）都必须携带此头。
+ */
+export const WCL_USER_AGENT = "wow-analyzer/0.1";
+
+/**
  * WCL v2 API 适配器（T8，FR-1/FR-3）。
  *  - 有 WCL_CLIENT_ID/SECRET → 真实 OAuth client_credentials + GraphQL 查询
  *    （www 与 cn 域各自对应官方 API 端点；只做轻量元数据查询）
@@ -183,6 +189,7 @@ export async function getAccessToken(
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Authorization: `Basic ${basic}`,
+      "User-Agent": WCL_USER_AGENT,
     },
     body: new URLSearchParams({ grant_type: "client_credentials" }),
   });
@@ -192,26 +199,48 @@ export async function getAccessToken(
   return data.access_token;
 }
 
+/** WCL GraphQL 请求失败（携带 HTTP 状态码，调用方据此区分 429 配额错误）。 */
+export class WclGqlError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`WCL GraphQL ${status}`);
+    this.name = "WclGqlError";
+    this.status = status;
+  }
+}
+
+export interface GqlResult<T> {
+  data: T;
+  /** x-ratelimit-remaining（点数，随返回数据量递减）；无法解析时为 null。 */
+  ratelimitRemaining: number | null;
+}
+
 export async function gqlQuery<T>(
   region: "www" | "cn",
   token: string,
   query: string,
   variables: Record<string, unknown>,
-): Promise<T> {
+  fetchFn?: typeof fetch,
+): Promise<GqlResult<T>> {
   const host = region === "cn" ? "cn.warcraftlogs.com" : "www.warcraftlogs.com";
-  const res = await fetch(`https://${host}/api/v2/client`, {
+  const res = await (fetchFn ?? fetch)(`https://${host}/api/v2/client`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
+      "User-Agent": WCL_USER_AGENT,
     },
     body: JSON.stringify({ query, variables }),
   });
-  if (!res.ok) throw new Error(`WCL GraphQL ${res.status}`);
+  if (!res.ok) throw new WclGqlError(res.status);
+  const remainingRaw = res.headers.get("x-ratelimit-remaining");
   const body = (await res.json()) as { data?: T; errors?: { message: string }[] };
   if (body.errors?.length) throw new Error(body.errors[0].message);
   if (!body.data) throw new Error("WCL 响应无数据");
-  return body.data;
+  return {
+    data: body.data,
+    ratelimitRemaining: remainingRaw != null ? Number(remainingRaw) : null,
+  };
 }
 
 interface RealFight {
@@ -260,7 +289,7 @@ query ReportFights($code: String!) {
 
 async function fetchRealMeta(code: string, region: "www" | "cn"): Promise<WclReportMeta> {
   const token = await getAccessToken(region);
-  const data = await gqlQuery<{
+  const { data } = await gqlQuery<{
     reportData?: {
       report?: {
         title: string;

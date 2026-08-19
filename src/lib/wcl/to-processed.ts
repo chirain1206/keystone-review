@@ -257,6 +257,18 @@ export function buildProcessedLogFromWcl(input: WclToProcessedInput): ProcessedL
     aggregate,
   };
 
+  // ---- 事件不完整标注（WCL 配额/分页限制）：向时间线注入一条说明，供 AI 如实引用 ----
+  if (truncated) {
+    log.timeline.unshift({
+      t: 0,
+      ts: "00:00.000",
+      type: "boss_phase",
+      actor: fight.name,
+      spell: fight.name,
+      note: "WCL 链接数据源：事件数据不完整（WCL 配额限制），完整分析请上传日志文件",
+    });
+  }
+
   // ---- FR-10 token 预算硬校验（链接源事件少，通常不会触发；防御性保留）----
   if (estimateProcessedLogTokens(log) > TOKEN_BUDGET_PER_COMBAT) {
     log.aggregate.perMinute = log.aggregate.perMinute.map((b) => ({

@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   getAccessToken,
   getWclReportMeta,
+  gqlQuery,
   parseWclUrl,
   selectFight,
+  WclGqlError,
   type WclFight,
 } from "@/lib/wcl/adapter";
 
@@ -241,6 +243,7 @@ describe("WCL OAuth getAccessToken（client_credentials）", () => {
     const headers = new Headers(init?.headers);
     expect(headers.get("Authorization")).toBe("Basic bXktaWQ6bXktc2VjcmV0"); // base64(my-id:my-secret)
     expect(headers.get("Content-Type")).toBe("application/x-www-form-urlencoded");
+    expect(headers.get("User-Agent")).toBe("wow-analyzer/0.1");
     expect(String(init?.body)).toBe("grant_type=client_credentials");
   });
 
@@ -268,5 +271,35 @@ describe("WCL OAuth getAccessToken（client_credentials）", () => {
     await expect(getAccessToken("www", { fetchFn: vi.fn<typeof fetch>() })).rejects.toThrow(
       "WCL_CLIENT_ID",
     );
+  });
+});
+
+describe("WCL gqlQuery（UA 头 + 配额头透传）", () => {
+  it("携带 User-Agent 且返回 x-ratelimit-remaining", async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify({ data: { reportData: { report: { title: "T" } } } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "x-ratelimit-remaining": "797" },
+      }),
+    );
+
+    const r = await gqlQuery<{ reportData: unknown }>("www", "tok", "query X { a }", {}, fetchFn);
+
+    expect(r.data).toEqual({ reportData: { report: { title: "T" } } });
+    expect(r.ratelimitRemaining).toBe(797);
+
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe("https://www.warcraftlogs.com/api/v2/client");
+    const headers = new Headers(init?.headers);
+    expect(headers.get("User-Agent")).toBe("wow-analyzer/0.1");
+    expect(headers.get("Authorization")).toBe("Bearer tok");
+  });
+
+  it("429 抛 WclGqlError 并携带 status", async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => new Response("rate limited", { status: 429 }));
+    await expect(gqlQuery("www", "tok", "query X { a }", {}, fetchFn)).rejects.toThrow(WclGqlError);
+    await expect(gqlQuery("www", "tok", "query X { a }", {}, fetchFn)).rejects.toMatchObject({
+      status: 429,
+    });
   });
 });

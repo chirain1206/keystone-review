@@ -46,12 +46,21 @@ export function buildChapterSystemPrompt(chapterNo: number, kbDelims?: KbDelimit
 /** 战斗概览（所有章节共享的输入前缀，提升上下文缓存命中率）。 */
 export function buildCombatOverview(log: ProcessedLog): string {
   const c = log.combat;
-  return [
+  const lines = [
     `副本：${c.dungeon}（${c.level} 层）`,
     `复盘对象：${c.playerName}（${c.playerClass} ${c.playerSpec}）`,
     `战斗时长：${Math.round(c.durationSec)} 秒，结果：${c.success ? "限时成功" : "未限时完成"}`,
     `队伍：${c.players.map((p) => `${p.name}(${p.class}${p.spec && p.spec !== "Unknown" ? "/" + p.spec : ""})`).join("、") || "（无记录）"}`,
-  ].join("\n");
+  ];
+  // 数据完整性说明：链接源因 WCL 配额/分页截断，文件源因 token 预算压缩
+  if (log.aggregate.truncated) {
+    lines.push(
+      log.source === "link"
+        ? "数据完整性：事件数据不完整（WCL 配额限制），完整分析请上传日志文件"
+        : "数据完整性：原始数据过大已做聚合压缩（部分明细未保留）",
+    );
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -92,7 +101,6 @@ export function sliceForChapter(chapterNo: number, log: ProcessedLog): string {
         ...cd,
         ...intr,
         ...deaths,
-        agg.truncated ? "（注：原始数据过大，已做聚合压缩）" : "",
       ].join("\n");
     }
     case 3: {

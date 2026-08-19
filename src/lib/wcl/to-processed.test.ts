@@ -126,4 +126,20 @@ describe("事件 → FR-10 转换", () => {
     const log = buildProcessedLogFromWcl({ fight, player, players, events: events() });
     expect(estimateProcessedLogTokens(log)).toBeLessThanOrEqual(TOKEN_BUDGET_PER_COMBAT);
   });
+
+  it("truncated 时向时间线注入「事件数据不完整（WCL 配额限制）」标注", () => {
+    const log = buildProcessedLogFromWcl({
+      fight,
+      player,
+      players,
+      events: events(),
+      truncated: true,
+    });
+    expect(log.aggregate.truncated).toBe(true);
+    const marker = log.timeline.find(
+      (e) => e.type === "boss_phase" && e.note?.includes("事件数据不完整"),
+    );
+    expect(marker).toBeDefined();
+    expect(marker!.note).toContain("完整分析请上传日志文件");
+  });
 });
