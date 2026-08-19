@@ -43,6 +43,9 @@ export default function HomeUpload() {
   const [linkUrl, setLinkUrl] = useState("");
   const [compareUrl, setCompareUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  // 链接模式的两个动作 loading 独立：避免"重新获取战斗数据"与"开始复盘"共用一个状态一起转
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [createBusy, setCreateBusy] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
@@ -72,7 +75,7 @@ export default function HomeUpload() {
     setLinkFights(null);
     setLinkPlayers(null);
     if (!linkUrl.trim()) return showError("请粘贴 Warcraft Logs 报告链接");
-    setBusy(true);
+    setLinkBusy(true);
     try {
       const turnstileToken = await getTurnstileToken("report_create");
       const res = await fetch("/api/reports/from-link", {
@@ -106,7 +109,7 @@ export default function HomeUpload() {
     } catch {
       showError("网络错误，请稍后重试");
     } finally {
-      setBusy(false);
+      setLinkBusy(false);
     }
   };
 
@@ -116,7 +119,7 @@ export default function HomeUpload() {
     if (selectedFightId == null || selectedPlayerId == null) {
       return showError("请选择一场战斗和一个复盘对象");
     }
-    setBusy(true);
+    setCreateBusy(true);
     try {
       const turnstileToken = await getTurnstileToken("report_create");
       const res = await fetch("/api/reports/from-link", {
@@ -145,7 +148,7 @@ export default function HomeUpload() {
     } catch {
       showError("网络错误，请稍后重试");
     } finally {
-      setBusy(false);
+      setCreateBusy(false);
     }
   };
 
@@ -265,8 +268,8 @@ export default function HomeUpload() {
             onChange={(e) => setCompareUrl(e.target.value)}
           />
           <div style={{ height: 16 }} />
-          <button className="btn btn-primary" disabled={busy} onClick={submitLink}>
-            {busy ? <span className="spinner" /> : linkFights ? "重新获取战斗数据" : "获取战斗数据"}
+          <button className="btn btn-primary" disabled={linkBusy} onClick={submitLink}>
+            {linkBusy ? <span className="spinner" /> : linkFights ? "重新获取战斗数据" : "获取战斗数据"}
           </button>
           {linkMock && (
             <p className="alert alert-info" style={{ marginTop: 12 }}>
@@ -352,8 +355,8 @@ export default function HomeUpload() {
               </table>
 
               <div style={{ height: 16 }} />
-              <button className="btn btn-primary" disabled={busy} onClick={submitSelected}>
-                {busy ? <span className="spinner" /> : "开始复盘"}
+              <button className="btn btn-primary" disabled={createBusy} onClick={submitSelected}>
+                {createBusy ? <span className="spinner" /> : "开始复盘"}
               </button>
             </div>
           )}
