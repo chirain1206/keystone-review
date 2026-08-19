@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth/provider";
 import { getRepo } from "@/lib/db";
-import { getWclReportMeta, selectFight } from "@/lib/wcl/adapter";
+import { getWclReportMeta, parseWclUrl, selectFight, type WclFight } from "@/lib/wcl/adapter";
+import { preselectPlayerId, type WclPlayer } from "@/lib/wcl/players";
 import type { ProcessedLog } from "@/lib/parser/schema";
 import { estimateProcessedLogTokens } from "@/lib/ai/tokens";
 import { enforceCreateLimits } from "@/lib/quota/enforce";
+import { verifyTurnstile } from "@/lib/turnstile/adapter";
+import { getClientIp } from "@/lib/net/client-ip";
 
 export const maxDuration = 30;
 
@@ -13,17 +16,17 @@ const bodySchema = z.object({
   url: z.string().trim().url("链接格式不正确"),
   compareUrl: z.string().trim().url("对比链接格式不正确").optional(),
   fightId: z.number().int().optional(),
+  /** 复盘对象 = 报告内 actor id（角色列表点选）；缺省走预览模式（返回战斗 + 角色列表）。 */
+  playerId: z.number().int().optional(),
   turnstileToken: z.string().optional(), // T9 人机验证
 });
 
 /**
- * POST /api/reports/from-link —— WCL 链接接入（FR-1/FR-3）。
- * 1) 校验链接（www / cn 双域）
- * 2) 拉取元数据（副本/层数/专精），仅大秘境（团本明确拒绝）
- * 3) 可选对比基准：获取失败不阻塞，降级为"本场不含对比章节"
- * 4) 以元数据建 report + 结构化日志（链接源不含事件级时间线 ——
- *    配额保护设计，AI 将按"数据不足"如实回答）
- * 失败提示完全对齐 FR-1 验收文案。
+ * POST /api/reports/from-link —— WCL 链接接入（FR-1/FR-3/FR-10，事件级数据）。
+ * 两段式：
+ *  1) 仅 url（预览）：返回大秘境战斗列表 + 参与角色列表（名字/职业/专精 + 上传者预选），不建报告、不扣每日额度；
+ *  2) url + fightId + playerId（创建）：拉取所选玩家该场战斗的必要事件，转 FR-10 结构化数据后建报告。
+ * 事件拉取失败/超配额 → 降级为仅元数据（报告标注"数据不足"，AI 如实回答）。
  */
 export async function POST(req: NextRequest) {
   const res = NextResponse.json<{ ok: boolean }>({ ok: false });
@@ -36,13 +39,9 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "请粘贴有效的 Warcraft Logs 报告链接" }, { status: 400 });
   }
-  const { url, compareUrl, fightId, turnstileToken } = parsed.data;
+  const { url, compareUrl, fightId, playerId, turnstileToken } = parsed.data;
 
-  // T9：人机验证 + 频控 + 每日额度
-  const limited = await enforceCreateLimits(req, user.id, turnstileToken);
-  if (limited) return limited;
-
-  // 主链接元数据
+  // 主链接元数据（战斗 + 玩家列表 + 上传者）
   const metaResult = await getWclReportMeta(url);
   if (!metaResult.ok) {
     const status = metaResult.code === "FETCH_FAILED" ? 502 : 400;
@@ -56,6 +55,42 @@ export async function POST(req: NextRequest) {
     );
   }
   const isMock = metaResult.meta.isMock === true;
+  const players = metaResult.meta.players;
+
+  // ---------- 预览模式：返回战斗 + 角色列表（不扣每日额度） ----------
+  if (playerId === undefined) {
+    const tv = await verifyTurnstile(turnstileToken, getClientIp(req));
+    if (!tv.ok) {
+      return NextResponse.json({ ok: false, error: tv.error }, { status: 403 });
+    }
+    return NextResponse.json({
+      ok: true,
+      preview: true,
+      isMock,
+      fights: metaResult.meta.fights.map((f) => ({
+        id: f.id,
+        name: f.name,
+        level: f.keystoneLevel,
+        success: f.success,
+        durationSec: f.durationSec,
+        affixes: f.affixes,
+        selected: f.selected === true,
+      })),
+      players,
+      selectedFightId: fight.id,
+      selectedPlayerId: preselectPlayerId(players, metaResult.meta.uploaderName),
+      compareDegraded: false,
+    });
+  }
+
+  // ---------- 创建模式：完整防护 + 事件拉取 + 建报告 ----------
+  const limited = await enforceCreateLimits(req, user.id, turnstileToken);
+  if (limited) return limited;
+
+  const player = players.find((p) => p.id === playerId);
+  if (!player) {
+    return NextResponse.json({ ok: false, error: "请选择有效的复盘对象" }, { status: 400 });
+  }
 
   // 对比基准（失败降级，不阻塞）
   let compareMeta: { url: string; title?: string; code?: string; note?: string } | null = null;
@@ -77,43 +112,38 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 以元数据构造结构化日志（链接源无事件级数据，AI 会按数据不足回答）
-  const log: ProcessedLog = {
-    version: 1,
-    source: "link",
-    combat: {
-      dungeon: fight.name,
-      level: fight.keystoneLevel ?? 2,
-      startTime: 0,
-      endTime: fight.durationSec * 1000,
-      durationSec: fight.durationSec,
-      success: fight.success,
-      players: [
-        { name: fight.playerName, class: fight.playerClass, spec: fight.playerSpec, role: "dps" },
-      ],
-      playerName: fight.playerName,
-      playerClass: fight.playerClass,
-      playerSpec: fight.playerSpec,
-    },
-    timeline: [
-      {
-        t: 0,
-        ts: "00:00.000",
-        type: "boss_phase",
-        actor: fight.name,
-        spell: fight.name,
-        note: "WCL 链接数据源：仅战斗元数据，无事件级时间线（API 配额保护设计）；如需完整分析请上传 WoWCombatLog.txt 文件",
-      },
-    ],
-    aggregate: {
-      interrupts: [],
-      deaths: [],
-      cooldowns: [],
-      vulnerablePhases: [],
-      movement: [],
-      perMinute: [],
-    },
-  };
+  // 拉取所选玩家该场战斗的必要事件 → FR-10；失败/无事件降级为仅元数据
+  const region = parseWclUrl(url).region ?? "www";
+  let log: ProcessedLog;
+  let dataInsufficient = false;
+  try {
+    const { getFightEvents } = await import("@/lib/wcl/events");
+    const { buildProcessedLogFromWcl } = await import("@/lib/wcl/to-processed");
+    const eventsRes = await getFightEvents({
+      code: metaResult.meta.code,
+      region,
+      fightId: fight.id,
+      playerId: player.id,
+      fightStartMs: fight.startTime ?? 0,
+      fightEndMs: fight.endTime ?? fight.durationSec * 1000,
+      isMock,
+    });
+    if (eventsRes.events.length === 0) {
+      log = metadataOnlyLog(fight, player, players);
+      dataInsufficient = true;
+    } else {
+      log = buildProcessedLogFromWcl({
+        fight,
+        player,
+        players,
+        events: eventsRes.events,
+        truncated: eventsRes.truncated,
+      });
+    }
+  } catch {
+    log = metadataOnlyLog(fight, player, players);
+    dataInsufficient = true;
+  }
 
   const repo = getRepo();
   const report = await repo.createReport({
@@ -121,9 +151,9 @@ export async function POST(req: NextRequest) {
     sourceType: "link",
     dungeon: fight.name,
     level: fight.keystoneLevel ?? 2,
-    spec: fight.playerSpec,
-    playerName: fight.playerName,
-    playerClass: fight.playerClass,
+    spec: player.spec,
+    playerName: player.name,
+    playerClass: player.class,
     result: fight.success,
     compareMeta,
     mock: isMock,
@@ -146,6 +176,46 @@ export async function POST(req: NextRequest) {
       durationSec: fight.durationSec,
       affixes: fight.affixes,
     },
+    player: { name: player.name, class: player.class, spec: player.spec },
+    dataInsufficient,
     compareDegraded: compareUrl ? !compareMeta?.title : false,
   });
+}
+
+/** 事件拉取失败/超配额时的降级日志：仅元数据 + "数据不足"说明（保持 AI 如实回答语义）。 */
+function metadataOnlyLog(fight: WclFight, player: WclPlayer, players: WclPlayer[]): ProcessedLog {
+  return {
+    version: 1,
+    source: "link",
+    combat: {
+      dungeon: fight.name,
+      level: fight.keystoneLevel ?? 2,
+      startTime: 0,
+      endTime: fight.durationSec * 1000,
+      durationSec: fight.durationSec,
+      success: fight.success,
+      players: players.map((p) => ({ name: p.name, class: p.class, spec: p.spec, role: p.role })),
+      playerName: player.name,
+      playerClass: player.class,
+      playerSpec: player.spec,
+    },
+    timeline: [
+      {
+        t: 0,
+        ts: "00:00.000",
+        type: "boss_phase",
+        actor: fight.name,
+        spell: fight.name,
+        note: "WCL 链接数据源：事件拉取失败或超出配额，仅战斗元数据；如需完整事件级分析请上传 WoWCombatLog.txt 文件",
+      },
+    ],
+    aggregate: {
+      interrupts: [],
+      deaths: [],
+      cooldowns: [],
+      vulnerablePhases: [],
+      movement: [],
+      perMinute: [],
+    },
+  };
 }

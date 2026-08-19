@@ -1,4 +1,5 @@
 import { envConfig, requireProductionEnv } from "@/lib/env";
+import { buildPlayers, mockPlayers, type WclPlayer } from "@/lib/wcl/players";
 
 /**
  * WCL v2 API 适配器（T8，FR-1/FR-3）。
@@ -20,6 +21,10 @@ export interface WclFight {
   affixes: string[];
   success: boolean;
   durationSec: number;
+  /** 战斗开始（相对报告起点毫秒），用于事件时间戳对齐。 */
+  startTime?: number;
+  /** 战斗结束（相对报告起点毫秒）。 */
+  endTime?: number;
   playerName: string; // 报告主角（best-effort）
   playerClass: string;
   playerSpec: string;
@@ -31,6 +36,10 @@ export interface WclReportMeta {
   code: string;
   title: string;
   fights: WclFight[];
+  /** 报告涉及的玩家（名字/职业/专精），供前端选择复盘对象。 */
+  players: WclPlayer[];
+  /** 报告上传者账号名（best-effort 识别角色用）。 */
+  uploaderName?: string;
   /** true = mock 合成数据（未配置 WCL 密钥），前端据此显示"演示数据"标注。 */
   isMock?: boolean;
 }
@@ -183,7 +192,7 @@ export async function getAccessToken(
   return data.access_token;
 }
 
-async function gqlQuery<T>(
+export async function gqlQuery<T>(
   region: "www" | "cn",
   token: string,
   query: string,
@@ -215,6 +224,15 @@ interface RealFight {
   fightPercentage?: number;
   startTime?: number;
   endTime?: number;
+  friendlyPlayers?: number[] | null;
+  friendlySpecs?: string[] | null;
+}
+
+interface RealActor {
+  id?: number | null;
+  name?: string | null;
+  subType?: string | null;
+  type?: string | null;
 }
 
 const FIGHTS_QUERY = `
@@ -222,6 +240,8 @@ query ReportFights($code: String!) {
   reportData {
     report(code: $code) {
       title
+      owner { name }
+      masterData { actors(type: "Player") { id name subType type } }
       fights(killType: Kills) {
         id
         name
@@ -231,6 +251,8 @@ query ReportFights($code: String!) {
         kill
         startTime
         endTime
+        friendlyPlayers
+        friendlySpecs
       }
     }
   }
@@ -239,14 +261,35 @@ query ReportFights($code: String!) {
 async function fetchRealMeta(code: string, region: "www" | "cn"): Promise<WclReportMeta> {
   const token = await getAccessToken(region);
   const data = await gqlQuery<{
-    reportData?: { report?: { title: string; fights: RealFight[] } };
+    reportData?: {
+      report?: {
+        title: string;
+        owner?: { name?: string | null } | null;
+        masterData?: { actors?: RealActor[] | null } | null;
+        fights: RealFight[];
+      };
+    };
   }>(region, token, FIGHTS_QUERY, { code });
   const report = data.reportData?.report;
   if (!report) throw new Error("报告不存在或已过期");
+  const fights = report.fights ?? [];
+  // 玩家列表只看大秘境战斗（排除混入的团本战斗，避免团本队员混进复盘对象列表）
+  const mythicFightsForPlayers = fights.filter((f) => f.keystoneLevel != null);
+  const { players, uploaderName } = buildPlayers(
+    report.masterData?.actors ?? [],
+    mythicFightsForPlayers.map((f) => ({
+      id: f.id,
+      friendlyPlayers: f.friendlyPlayers,
+      friendlySpecs: f.friendlySpecs,
+    })),
+    report.owner?.name,
+  );
   return {
     code,
     title: report.title,
-    fights: (report.fights ?? []).map((f) => ({
+    players,
+    uploaderName,
+    fights: fights.map((f) => ({
       id: f.id,
       name: f.name,
       difficulty: f.difficulty ?? 0,
@@ -254,6 +297,8 @@ async function fetchRealMeta(code: string, region: "www" | "cn"): Promise<WclRep
       affixes: (f.keystoneAffixes ?? []).map(String),
       success: f.kill ?? false,
       durationSec: f.startTime && f.endTime ? Math.round((f.endTime - f.startTime) / 1000) : 0,
+      startTime: f.startTime ?? 0,
+      endTime: f.endTime ?? f.startTime ?? 0,
       playerName: "（从 WCL 玩家列表选择）",
       playerClass: "Unknown",
       playerSpec: "Unknown",
@@ -272,6 +317,8 @@ async function fetchRealMeta(code: string, region: "www" | "cn"): Promise<WclRep
 function fetchMockMeta(code: string): WclReportMeta {
   const isRaid = /raid/i.test(code);
   const isEmpty = /empty/i.test(code);
+  const players = mockPlayers();
+  const uploaderName = players.find((p) => p.isUploader)?.name;
   const fights: WclFight[] = isEmpty
     ? []
     : isRaid
@@ -284,6 +331,8 @@ function fetchMockMeta(code: string): WclReportMeta {
           affixes: [],
           success: true,
           durationSec: 412,
+          startTime: 60_000,
+          endTime: 472_000,
           playerName: "DemoPlayer",
           playerClass: "Mage",
           playerSpec: "Fire",
@@ -298,6 +347,8 @@ function fetchMockMeta(code: string): WclReportMeta {
           affixes: ["10", "124", "134"],
           success: true,
           durationSec: 1650,
+          startTime: 60_000,
+          endTime: 1_710_000,
           playerName: "DemoPlayer",
           playerClass: "Mage",
           playerSpec: "Fire",
@@ -310,12 +361,14 @@ function fetchMockMeta(code: string): WclReportMeta {
           affixes: ["10", "124", "134"],
           success: false,
           durationSec: 1830,
+          startTime: 1_800_000,
+          endTime: 3_630_000,
           playerName: "DemoPlayer",
           playerClass: "Mage",
           playerSpec: "Fire",
         },
       ];
-  return { code, title: `WCL 报告 ${code}（mock 数据）`, fights, isMock: true };
+  return { code, title: `WCL 报告 ${code}（mock 数据）`, fights, players, uploaderName, isMock: true };
 }
 
 // ---------- 统一入口 ----------

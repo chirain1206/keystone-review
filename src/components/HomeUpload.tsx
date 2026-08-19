@@ -8,6 +8,25 @@ import { estimateProcessedLogTokens } from "@/lib/ai/tokens";
 import { getTurnstileToken } from "@/lib/client/turnstile";
 import { dungeonDisplayName } from "@/lib/wcl/dungeon-names";
 
+/** from-link 预览返回的战斗与角色。 */
+interface LinkFight {
+  id: number;
+  name: string;
+  level: number | null;
+  success: boolean;
+  durationSec: number;
+  affixes: string[];
+  selected?: boolean;
+}
+interface LinkPlayer {
+  id: number;
+  name: string;
+  class: string;
+  spec: string;
+  role: string;
+  isUploader?: boolean;
+}
+
 /**
  * 首页核心交互（T12）：
  *  - FR-1 粘贴 WCL 链接 → from-link 接口
@@ -34,6 +53,13 @@ export default function HomeUpload() {
   const [selected, setSelected] = useState<number>(0);
   const [spec, setSpec] = useState("");
 
+  // WCL 链接预览状态（战斗列表 + 角色列表，两段式：先预览后创建）
+  const [linkFights, setLinkFights] = useState<LinkFight[] | null>(null);
+  const [linkPlayers, setLinkPlayers] = useState<LinkPlayer[] | null>(null);
+  const [selectedFightId, setSelectedFightId] = useState<number | null>(null);
+  const [selectedPlayerId, setSelectedPlayerId] = useState<number | null>(null);
+  const [linkMock, setLinkMock] = useState(false);
+
   const showError = (msg: string) => {
     setError(msg);
     setInfo("");
@@ -43,6 +69,8 @@ export default function HomeUpload() {
   const submitLink = async () => {
     setError("");
     setInfo("");
+    setLinkFights(null);
+    setLinkPlayers(null);
     if (!linkUrl.trim()) return showError("请粘贴 Warcraft Logs 报告链接");
     setBusy(true);
     try {
@@ -63,9 +91,56 @@ export default function HomeUpload() {
           router.push("/login");
           return;
         }
+        return showError(data.error ?? "获取失败，请重试");
+      }
+      const fights = (data.fights ?? []) as LinkFight[];
+      const players = (data.players ?? []) as LinkPlayer[];
+      if (fights.length === 0 || players.length === 0) {
+        return showError("该报告中没有可分析的大秘境战斗或角色，请更换链接或上传文件");
+      }
+      setLinkFights(fights);
+      setLinkPlayers(players);
+      setSelectedFightId(typeof data.selectedFightId === "number" ? data.selectedFightId : fights[0].id);
+      setSelectedPlayerId(typeof data.selectedPlayerId === "number" ? data.selectedPlayerId : players[0].id);
+      setLinkMock(data.isMock === true);
+    } catch {
+      showError("网络错误，请稍后重试");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ---------- WCL 链接：选定战斗 + 角色后创建复盘 ----------
+  const submitSelected = async () => {
+    setError("");
+    if (selectedFightId == null || selectedPlayerId == null) {
+      return showError("请选择一场战斗和一个复盘对象");
+    }
+    setBusy(true);
+    try {
+      const turnstileToken = await getTurnstileToken("report_create");
+      const res = await fetch("/api/reports/from-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: linkUrl.trim(),
+          fightId: selectedFightId,
+          playerId: selectedPlayerId,
+          compareUrl: compareUrl.trim() || undefined,
+          turnstileToken,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        if (res.status === 401) {
+          setError("请先登录后再生成复盘");
+          router.push("/login");
+          return;
+        }
         return showError(data.error ?? "创建失败，请重试");
       }
       if (data.compareDegraded) setInfo("对比链接获取失败，本场将不含对比章节（不阻塞复盘）。");
+      if (data.dataInsufficient) setInfo("事件数据拉取不足，报告将按元数据分析（建议上传文件获取完整分析）。");
       router.push(`/reports/${data.id}`);
     } catch {
       showError("网络错误，请稍后重试");
@@ -191,11 +266,101 @@ export default function HomeUpload() {
           />
           <div style={{ height: 16 }} />
           <button className="btn btn-primary" disabled={busy} onClick={submitLink}>
-            {busy ? <span className="spinner" /> : "获取战斗数据"}
+            {busy ? <span className="spinner" /> : linkFights ? "重新获取战斗数据" : "获取战斗数据"}
           </button>
+          {linkMock && (
+            <p className="alert alert-info" style={{ marginTop: 12 }}>
+              当前为演示数据（未配置 WCL 密钥），可用于体验流程；真实数据请配置密钥后使用。
+            </p>
+          )}
+
+          {linkFights && linkPlayers && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ height: 4 }} />
+              <label className="label">选择要复盘的一场战斗：</label>
+              <table className="list">
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>副本</th>
+                    <th>层数</th>
+                    <th>时长</th>
+                    <th>结果</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {linkFights.map((f) => (
+                    <tr key={f.id}>
+                      <td>
+                        <input
+                          type="radio"
+                          name="link-fight"
+                          checked={selectedFightId === f.id}
+                          onChange={() => setSelectedFightId(f.id)}
+                        />
+                      </td>
+                      <td>{dungeonDisplayName(f.name)}</td>
+                      <td>{f.level ?? "-"}</td>
+                      <td>
+                        {Math.floor(f.durationSec / 60)} 分 {f.durationSec % 60} 秒
+                      </td>
+                      <td>
+                        <span className={`badge ${f.success ? "badge-ok" : "badge-err"}`}>
+                          {f.success ? "限时成功" : "未限时"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div style={{ height: 12 }} />
+              <label className="label">选择复盘对象（本场涉及的角色）：</label>
+              <table className="list">
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>角色</th>
+                    <th>职业</th>
+                    <th>专精</th>
+                    <th>定位</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {linkPlayers.map((p) => (
+                    <tr key={p.id}>
+                      <td>
+                        <input
+                          type="radio"
+                          name="link-player"
+                          checked={selectedPlayerId === p.id}
+                          onChange={() => setSelectedPlayerId(p.id)}
+                        />
+                      </td>
+                      <td>
+                        {p.name}
+                        {p.isUploader && <span style={{ marginLeft: 6, fontSize: 12 }}>📤 上传者</span>}
+                      </td>
+                      <td>{p.class}</td>
+                      <td>{p.spec === "Unknown" ? "待确认" : p.spec}</td>
+                      <td>
+                        {p.role === "tank" ? "坦克" : p.role === "healer" ? "治疗" : p.role === "dps" ? "输出" : "-"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div style={{ height: 16 }} />
+              <button className="btn btn-primary" disabled={busy} onClick={submitSelected}>
+                {busy ? <span className="spinner" /> : "开始复盘"}
+              </button>
+            </div>
+          )}
+
           <p style={{ color: "var(--text-dim)", fontSize: 13, marginTop: 12 }}>
-            链接方式仅拉取战斗元数据（副本/层数/成败），如需完整事件级分析，请上传
-            WoWCombatLog.txt 文件（在游戏内输入 /combatlog 生成）。
+            链接方式会按所选角色拉取该场战斗的必要事件（施放/爆发/打断/死亡/易伤），生成真实统计；
+            如需最完整的事件级分析，仍可上传 WoWCombatLog.txt 文件（游戏内输入 /combatlog 生成）。
           </p>
         </div>
       )}
