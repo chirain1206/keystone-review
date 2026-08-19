@@ -81,6 +81,7 @@ export function formatPerformance(
 }
 
 export interface RecommendationLike {
+  level: number | null;
   keyPercent: number | null;
   amount: number | null;
   routeSimilarity: number | null;
@@ -185,11 +186,14 @@ export function buildLevelRange(levels: readonly (number | null)[]): string {
 }
 
 /**
- * 推荐列表排序（与后端 rankRecommendations 一致）：Key % 优先，相似度其次。
- * 主排序 = Key % 降序（缺失排最后，缺失时 DPS 兜底）；次排序 = 路线相似度；再次 = 阵容相似度。
+ * 推荐列表排序（与后端 rankRecommendations 一致）：层数从高到低分组，层内 Key % 优先，相似度其次。
+ * 主排序 = 层数降序；层内 = Key % 降序（缺失排最后，缺失时 DPS 兜底）→ 路线相似度 → 阵容相似度。
  */
 export function sortRecommendations<T extends RecommendationLike>(list: readonly T[]): T[] {
   return [...list].sort((a, b) => {
+    const la = a.level ?? -1;
+    const lb = b.level ?? -1;
+    if (la !== lb) return lb - la;
     const ka = a.keyPercent ?? -1;
     const kb = b.keyPercent ?? -1;
     if (ka !== kb) return kb - ka;

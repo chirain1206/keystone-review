@@ -50,9 +50,17 @@ describe("formatKeyPercent / formatPerformance", () => {
   });
 });
 
-describe("sortRecommendations（Key % 优先，相似度其次）", () => {
-  const item = (id: string, keyPercent: number | null, amount: number | null, route: number | null, comp: number | null) => ({
+describe("sortRecommendations（层数从高到低 + 层内 Key % 优先）", () => {
+  const item = (
+    id: string,
+    keyPercent: number | null,
+    amount: number | null,
+    route: number | null,
+    comp: number | null,
+    level: number | null = 10,
+  ) => ({
     id,
+    level,
     keyPercent,
     amount,
     routeSimilarity: route,
@@ -60,12 +68,12 @@ describe("sortRecommendations（Key % 优先，相似度其次）", () => {
     combined: null,
   });
 
-  it("主排序 Key % 降序，缺失排最后，DPS 兜底", () => {
+  it("主排序层数降序，层内 Key % 降序，缺失排最后，DPS 兜底", () => {
     const list = [
-      item("a", 88, 11_000, 0.8, 0.9),
-      item("b", 95, 9_000, 0.1, 0.1),
-      item("c", 88, 13_000, 0.9, 0.5),
-      item("d", null, 13_000, 0.9, 0.8),
+      item("a", 88, 11_000, 0.8, 0.9, 10),
+      item("b", 95, 9_000, 0.1, 0.1, 11), // 高层排最前
+      item("c", 88, 13_000, 0.9, 0.5, 10),
+      item("d", null, 13_000, 0.9, 0.8, 10),
     ];
     expect(sortRecommendations(list).map((x) => x.id)).toEqual(["b", "c", "a", "d"]);
   });

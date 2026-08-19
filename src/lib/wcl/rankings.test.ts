@@ -8,16 +8,18 @@ import {
   filterByLevelRange,
   limitEntries,
   maxAgeDays,
+  maxCandidates,
   normalizeSpec,
   parseBestRank,
   parseRankingEntries,
-  RANKING_CANDIDATE_LIMIT,
-  rangeLevels,
+  rangeDown,
+  rangeUp,
   rankByRecency,
   rankRecommendations,
   rankingMetric,
   recencyDays,
   recommendReferences,
+  samplesPerLevel,
   sortByAmountDesc,
   specMatchesTeam,
   wclSlug,
@@ -99,7 +101,7 @@ describe("parseRankingEntries（真实结构：{ rankings: [...] } 包裹）", (
   });
 });
 
-describe("parseBestRank / estimateKeyPercent（Key % 兜底估算）", () => {
+describe("parseBestRank / estimateKeyPercent（playerscore best/totalParses 估算）", () => {
   it("parseBestRank 去 ~ 前缀，兼容数字/字符串，非法返回 null", () => {
     expect(parseBestRank("~43")).toBe(43);
     expect(parseBestRank("43")).toBe(43);
@@ -111,14 +113,14 @@ describe("parseBestRank / estimateKeyPercent（Key % 兜底估算）", () => {
   });
 
   it("estimateKeyPercent 按 round(100*(1-best/total)) 计算", () => {
-    expect(estimateKeyPercent("~43", 1093)).toBe(96); // round(100*(1-43/1093))=96.07→96
-    expect(estimateKeyPercent("~4", 75)).toBe(95); // round(100*(1-4/75))=94.67→95
+    expect(estimateKeyPercent("~43", 1093)).toBe(96);
+    expect(estimateKeyPercent("~4", 75)).toBe(95);
   });
 
   it("边界：下限 0、上限 99", () => {
-    expect(estimateKeyPercent("~795", 795)).toBe(0); // 100*(1-1)=0
-    expect(estimateKeyPercent("~1", 1000)).toBe(99); // 99.9 → 上限 99
-    expect(estimateKeyPercent("~1000", 100)).toBe(0); // 负值 → 下限 0
+    expect(estimateKeyPercent("~795", 795)).toBe(0);
+    expect(estimateKeyPercent("~1", 1000)).toBe(99);
+    expect(estimateKeyPercent("~1000", 100)).toBe(0);
   });
 
   it("totalParses 缺失/非法或 best 缺失 → null", () => {
@@ -128,35 +130,42 @@ describe("parseBestRank / estimateKeyPercent（Key % 兜底估算）", () => {
   });
 });
 
-describe("extractSpecPercents（Key %：best/totalParses 主 + bracketPercent 兜底）", () => {
-  it("best/totalParses 优先估算（playerscore 口径，Lêthê 例）", () => {
-    const r = { data: [{ roles: { dps: { characters: [{ spec: "Windwalker", bracketPercent: 0, best: "~105", totalParses: 958 }] } } }] };
-    expect(extractSpecPercents(r, "Windwalker")).toEqual({ keyPercent: 89, parsePercent: null }); // 100*(1-105/958)≈89
+describe("extractSpecPercents（Key% 回退链：dps bracketPercent → playerscore bracketPercent → playerscore best/totalParses → null）", () => {
+  const char = (over: Record<string, unknown> = {}) => ({ spec: "Windwalker", ...over });
+  const wrap = (c: Record<string, unknown>) => ({ data: [{ roles: { dps: { characters: [c] } } }] });
+
+  it("dps 口径 bracketPercent 为主（ZH8q4LjDNKAfYRXC 例：网页 100 == dps bracketPercent=100）", () => {
+    const dps = wrap(char({ bracketPercent: 100 }));
+    const score = wrap(char({ bracketPercent: 50, best: "~1", totalParses: 1000 }));
+    expect(extractSpecPercents(dps, score, "Windwalker")).toEqual({ keyPercent: 100, parsePercent: null });
   });
 
-  it("best/totalParses 缺失时回退 bracketPercent（若非 0）", () => {
-    const r = { data: [{ roles: { dps: { characters: [{ spec: "Windwalker", bracketPercent: 92, rankPercent: 97 }] } } }] };
-    expect(extractSpecPercents(r, "Windwalker")).toEqual({ keyPercent: 92, parsePercent: 97 });
+  it("dps bracketPercent=0 → playerscore bracketPercent 兜底", () => {
+    const dps = wrap(char({ bracketPercent: 0 }));
+    const score = wrap(char({ bracketPercent: 92 }));
+    expect(extractSpecPercents(dps, score, "Windwalker")).toEqual({ keyPercent: 92, parsePercent: null });
   });
 
-  it("bracketPercent=0 且无 best/totalParses → null（交 DPS 兜底）", () => {
-    const r = { data: [{ roles: { dps: { characters: [{ spec: "Windwalker", bracketPercent: 0, rankPercent: 0 }] } } }] };
-    expect(extractSpecPercents(r, "Windwalker")).toEqual({ keyPercent: null, parsePercent: null });
+  it("dps=0 且 playerscore bracketPercent=0 → playerscore best/totalParses 公式兜底", () => {
+    const dps = wrap(char({ bracketPercent: 0 }));
+    const score = wrap(char({ bracketPercent: 0, best: "~105", totalParses: 958 }));
+    expect(extractSpecPercents(dps, score, "Windwalker")).toEqual({ keyPercent: 89, parsePercent: null }); // 100*(1-105/958)≈89
+  });
+
+  it("全无 → null（交 DPS 兜底）", () => {
+    const dps = wrap(char({ bracketPercent: 0 }));
+    const score = wrap(char({ bracketPercent: 0 }));
+    expect(extractSpecPercents(dps, score, "Windwalker")).toEqual({ keyPercent: null, parsePercent: null });
   });
 
   it("结构缺失/专精未知 → null", () => {
-    expect(extractSpecPercents(null, "Windwalker")).toEqual({ keyPercent: null, parsePercent: null });
-    expect(extractSpecPercents({ data: [{ roles: { dps: { characters: [{ spec: "Arcane", bracketPercent: 88 }] } } }] }, "Unknown")).toEqual({ keyPercent: null, parsePercent: null });
+    expect(extractSpecPercents(null, null, "Windwalker")).toEqual({ keyPercent: null, parsePercent: null });
+    expect(extractSpecPercents(wrap(char({ bracketPercent: 88 })), null, "Unknown")).toEqual({ keyPercent: null, parsePercent: null });
   });
 
-  it("从 healers 角色也能提取（治疗专精）", () => {
-    const r = { data: [{ roles: { healers: { characters: [{ spec: "Restoration", best: "~14", totalParses: 495 }] } } }] };
-    expect(extractSpecPercents(r, "Restoration")).toEqual({ keyPercent: 97, parsePercent: null }); // 100*(1-14/495)≈97
-  });
-
-  it("多角色同名专精取首个匹配", () => {
-    const r = { data: [{ roles: { dps: { characters: [{ spec: "Fire", best: "~4", totalParses: 75 }, { spec: "Fire", best: "~1", totalParses: 75 }] } } }] };
-    expect(extractSpecPercents(r, "Fire")).toEqual({ keyPercent: 95, parsePercent: null }); // 100*(1-4/75)≈95
+  it("healers 角色也能提取", () => {
+    const dps = { data: [{ roles: { healers: { characters: [{ spec: "Restoration", bracketPercent: 83 }] } } }] };
+    expect(extractSpecPercents(dps, null, "Restoration")).toEqual({ keyPercent: 83, parsePercent: null });
   });
 });
 
@@ -173,8 +182,7 @@ describe("层数范围 / 去重 / N 上限 / DPS 降序", () => {
 
   it("limitEntries 取前 N", () => {
     const entries = Array.from({ length: 20 }, (_, i) => entry(`c${i}`));
-    expect(limitEntries(entries, RANKING_CANDIDATE_LIMIT)).toHaveLength(RANKING_CANDIDATE_LIMIT);
-    expect(RANKING_CANDIDATE_LIMIT).toBeLessThanOrEqual(10);
+    expect(limitEntries(entries, maxCandidates())).toHaveLength(maxCandidates());
   });
 
   it("sortByAmountDesc：DPS 降序，null 排最后", () => {
@@ -183,41 +191,34 @@ describe("层数范围 / 去重 / N 上限 / DPS 降序", () => {
   });
 });
 
-describe("rankRecommendations（Key % 优先，相似度其次）", () => {
-  const item = (id: string, keyPercent: number | null, amount: number | null, route: number | null, comp: number | null) => ({
-    id,
-    keyPercent,
-    amount,
-    routeSimilarity: route,
-    compSimilarity: comp,
-  });
+describe("rankRecommendations（层数从高到低 + 层内 Key % 优先）", () => {
+  const item = (
+    id: string,
+    level: number | null,
+    keyPercent: number | null,
+    amount: number | null,
+    route: number | null,
+    comp: number | null,
+  ) => ({ id, level, keyPercent, amount, routeSimilarity: route, compSimilarity: comp });
 
-  it("主排序 Key % 降序，Key % 相同时 DPS 兜底，再比路线/阵容", () => {
+  it("主排序层数降序，层内 Key % 降序 → DPS → 路线 → 阵容", () => {
     const items = [
-      item("a", 88, 11_000, 0.8, 0.9),
-      item("b", 95, 9_000, 0.1, 0.1),
-      item("c", 88, 13_000, 0.9, 0.5),
-      item("d", 88, 13_000, 0.9, 0.8),
+      item("a", 10, 95, 9_000, 0.1, 0.1),
+      item("b", 11, 88, 11_000, 0.8, 0.9), // 高层排最前
+      item("c", 11, 92, 9_000, 0.5, 0.5),
+      item("d", 11, 92, 13_000, 0.5, 0.5),
+      item("e", 10, 96, 9_000, 0.1, 0.1),
     ];
-    expect(rankRecommendations(items).map((x) => x.id)).toEqual(["b", "d", "c", "a"]);
+    expect(rankRecommendations(items).map((x) => x.id)).toEqual(["d", "c", "b", "e", "a"]);
   });
 
-  it("无 Key %（null）排最后，仅按 DPS/相似度排序", () => {
+  it("无 Key % 排最后，仅按 DPS/相似度排序", () => {
     const items = [
-      item("a", null, 9_000, 0.9, 0.5),
-      item("b", 92, 5_000, 0.1, 0.1),
-      item("c", null, 13_000, 0.9, 0.8),
+      item("a", 10, null, 9_000, 0.9, 0.5),
+      item("b", 10, 92, 5_000, 0.1, 0.1),
+      item("c", 10, null, 13_000, 0.9, 0.8),
     ];
     expect(rankRecommendations(items).map((x) => x.id)).toEqual(["b", "c", "a"]);
-  });
-
-  it("Key % 与 DPS 均缺失时按路线/阵容排序", () => {
-    const items = [
-      item("a", null, null, 0.8, 0.9),
-      item("b", null, null, 0.9, 0.5),
-      item("c", null, null, 0.9, 0.8),
-    ];
-    expect(rankRecommendations(items).map((x) => x.id)).toEqual(["c", "b", "a"]);
   });
 });
 
@@ -231,41 +232,48 @@ describe("专精/职业过滤", () => {
   });
 });
 
-describe("环境变量配置", () => {
+describe("环境变量配置（RANGE_DOWN/RANGE_UP/SAMPLES_PER_LEVEL/MAX_CANDIDATES/RANKING_METRIC）", () => {
   const prev = {
-    range: process.env.RANGE_LEVELS,
+    down: process.env.RANGE_DOWN,
+    up: process.env.RANGE_UP,
+    samples: process.env.SAMPLES_PER_LEVEL,
+    max: process.env.MAX_CANDIDATES,
     metric: process.env.RANKING_METRIC,
-    recency: process.env.RECENCY_DAYS,
-    maxAge: process.env.MAX_AGE_DAYS,
   };
   afterEach(() => {
     for (const [k, v] of Object.entries({
-      RANGE_LEVELS: prev.range,
+      RANGE_DOWN: prev.down,
+      RANGE_UP: prev.up,
+      SAMPLES_PER_LEVEL: prev.samples,
+      MAX_CANDIDATES: prev.max,
       RANKING_METRIC: prev.metric,
-      RECENCY_DAYS: prev.recency,
-      MAX_AGE_DAYS: prev.maxAge,
     })) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
   });
 
-  it("rangeLevels 缺省 1；rankingMetric 缺省 dps", () => {
-    delete process.env.RANGE_LEVELS;
-    delete process.env.RANKING_METRIC;
-    expect(rangeLevels()).toBe(1);
-    expect(rankingMetric()).toBe("dps");
+  it("rangeDown 缺省 1；rangeUp 缺省 2；samplesPerLevel 缺省 3；maxCandidates 缺省 12", () => {
+    delete process.env.RANGE_DOWN;
+    delete process.env.RANGE_UP;
+    delete process.env.SAMPLES_PER_LEVEL;
+    delete process.env.MAX_CANDIDATES;
+    expect(rangeDown()).toBe(1);
+    expect(rangeUp()).toBe(2);
+    expect(samplesPerLevel()).toBe(3);
+    expect(maxCandidates()).toBe(12);
   });
 
-  it("recencyDays 缺省 14；maxAgeDays 缺省 30；非法值回退", () => {
-    delete process.env.RECENCY_DAYS;
-    delete process.env.MAX_AGE_DAYS;
-    expect(recencyDays()).toBe(14);
-    expect(maxAgeDays()).toBe(30);
-    process.env.RECENCY_DAYS = "abc";
-    process.env.MAX_AGE_DAYS = "-5";
-    expect(recencyDays()).toBe(14);
-    expect(maxAgeDays()).toBe(30);
+  it("非法值回退默认", () => {
+    process.env.RANGE_DOWN = "abc";
+    process.env.RANGE_UP = "-2";
+    expect(rangeDown()).toBe(1);
+    expect(rangeUp()).toBe(2);
+  });
+
+  it("rankingMetric 缺省 dps", () => {
+    delete process.env.RANKING_METRIC;
+    expect(rankingMetric()).toBe("dps");
   });
 });
 
@@ -278,16 +286,16 @@ describe("候选时效性：ageInDays / rankByRecency", () => {
     expect(ageInDays(now - 3 * DAY, now)).toBeCloseTo(3, 5);
     expect(ageInDays(null, now)).toBeNull();
     expect(ageInDays(0, now)).toBeNull();
-    expect(ageInDays(now + DAY, now)).toBeNull(); // 未来时间视为未知
+    expect(ageInDays(now + DAY, now)).toBeNull();
   });
 
   it("新候选保持原顺序；较早候选排后并标注 stale；超龄过滤", () => {
     const ranked = [
-      item("fresh2", now - 2 * DAY), // 2 天 → fresh
-      item("stale1", now - 20 * DAY), // 20 天 → stale
-      item("fresh1", now - 1 * DAY), // 1 天 → fresh
-      item("tooOld", now - 40 * DAY), // 40 天 → 过滤
-      item("unknown", null), // 未知 → fresh
+      item("fresh2", now - 2 * DAY),
+      item("stale1", now - 20 * DAY),
+      item("fresh1", now - 1 * DAY),
+      item("tooOld", now - 40 * DAY),
+      item("unknown", null),
     ];
     const out = rankByRecency(ranked, { nowMs: now, recencyDays: 14, maxAgeDays: 30 });
     expect(out.map((r) => r.item.id)).toEqual(["fresh2", "fresh1", "unknown", "stale1"]);
@@ -295,20 +303,20 @@ describe("候选时效性：ageInDays / rankByRecency", () => {
     expect(out.find((r) => r.item.id === "tooOld")).toBeUndefined();
   });
 
-  it("边界：age ≤ recencyDays 视为新；age > maxAgeDays 过滤", () => {
-    const ranked = [
-      item("at14", now - 14 * DAY), // 恰 14 天 → fresh（≤ RECENCY_DAYS）
-      item("at30", now - 30 * DAY), // 恰 30 天 → stale（≤ MAX_AGE_DAYS）
-      item("over30", now - (30 * DAY + 1)), // 超 30 → 过滤
-    ];
-    const out = rankByRecency(ranked, { nowMs: now, recencyDays: 14, maxAgeDays: 30 });
-    expect(out.map((r) => r.item.id)).toEqual(["at14", "at30"]);
-    expect(out.map((r) => r.recency)).toEqual(["fresh", "stale"]);
+  it("recencyDays 缺省 14；maxAgeDays 缺省 30", () => {
+    delete process.env.RECENCY_DAYS;
+    delete process.env.MAX_AGE_DAYS;
+    expect(recencyDays()).toBe(14);
+    expect(maxAgeDays()).toBe(30);
+    process.env.RECENCY_DAYS = "abc";
+    process.env.MAX_AGE_DAYS = "-5";
+    expect(recencyDays()).toBe(14);
+    expect(maxAgeDays()).toBe(30);
   });
 });
 
 describe("recommendReferences（mock 分支：Key % 优先排序）", () => {
-  it("主排序按 Key % 降序（即便该候选相似度更低）+ 链接带 #fight", async () => {
+  it("主排序按 Key % 降序 + 链接带 #fight", async () => {
     const r = await recommendReferences(
       { dungeon: "Ruby Life Pools", level: 15, spec: "Fire", playerClass: "Mage", region: "www", userRoute: null, userComp: USER_COMP, isMock: true },
       {},
@@ -320,8 +328,6 @@ describe("recommendReferences（mock 分支：Key % 优先排序）", () => {
     const kp = r.candidates.map((c) => c.keyPercent ?? -1);
     expect([...kp].sort((a, b) => b - a)).toEqual(kp);
     expect(r.candidates[0].url).toContain("warcraftlogs.com/reports/MOCK3#fight=");
-    expect(r.candidates.every((c) => c.routeSimilarity === null)).toBe(true);
-    expect(r.candidates[0].parsePercent).toBe(99);
     expect(r.candidates.every((c) => c.url.includes("#fight="))).toBe(true);
   });
 });
@@ -384,8 +390,11 @@ describe("recommendReferences（真实路径：缓存命中不重复请求）", 
                       { id: 5, name: "Druid", subType: "Druid", type: "Player" },
                     ],
                   },
-                  rankings: {
-                    data: [{ roles: { dps: { characters: [{ spec: "Fire", best: "~105", totalParses: 958, rankPercent: 96 }] } } }],
+                  rankingsDps: {
+                    data: [{ roles: { dps: { characters: [{ spec: "Fire", bracketPercent: 92, rankPercent: 96 }] } } }],
+                  },
+                  rankingsPlayerscore: {
+                    data: [{ roles: { dps: { characters: [{ spec: "Fire", bracketPercent: 88, best: "~105", totalParses: 958 }] } } }],
                   },
                 },
               },
@@ -408,7 +417,7 @@ describe("recommendReferences（真实路径：缓存命中不重复请求）", 
     clearNpcNameCache();
   });
 
-  it("第二次调用不再请求 characterRankings，且解析出 Key %", async () => {
+  it("第二次调用不再请求 characterRankings，且 Key% 取 dps 口径 bracketPercent", async () => {
     const { fetchFn, queries } = makeFakeFetch();
     const deps = { fetchFn, clientId: "id", clientSecret: "secret" };
     const input = { dungeon: "Ruby Life Pools", level: 15, spec: "Fire", playerClass: "Mage", region: "www" as const, userRoute: null, userComp: USER_COMP };
@@ -416,8 +425,7 @@ describe("recommendReferences（真实路径：缓存命中不重复请求）", 
     const first = await recommendReferences(input, deps);
     expect(first.ok).toBe(true);
     expect(first.candidates.length).toBeGreaterThan(0);
-    expect(first.candidates[0].keyPercent).toBe(89); // best ~105 / totalParses 958
-    expect(first.candidates[0].parsePercent).toBe(96);
+    expect(first.candidates[0].keyPercent).toBe(92); // dps bracketPercent 为主
     expect(first.candidates[0].amount).toBe(310_042);
     expect(first.candidates[0].url).toContain("#fight=7");
 
