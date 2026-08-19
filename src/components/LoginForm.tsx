@@ -67,9 +67,9 @@ export default function LoginForm() {
 
   return (
     <main>
-      <div className="card" style={{ maxWidth: 460, margin: "40px auto" }}>
+      <div className="card login-card">
         <h1>登录 / 注册</h1>
-        <p style={{ color: "var(--text-dim)", fontSize: 14 }}>
+        <p className="login-sub">
           无需密码：输入邮箱，我们会发送 6 位验证码（10 分钟内有效，可重发）。
           登录后可保存历史复盘并使用每日 3 次免费额度。
         </p>
@@ -77,61 +77,65 @@ export default function LoginForm() {
         {error && <div className="alert alert-error">{error}</div>}
         {mockHint && <div className="alert alert-info">{mockHint}</div>}
 
-        <label className="label" htmlFor="email">
-          邮箱
-        </label>
-        <input
-          id="email"
-          className="input"
-          type="email"
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          disabled={step === "code"}
-        />
-
-        {step === "code" && (
-          <>
-            <div style={{ height: 12 }} />
-            <label className="label" htmlFor="code">
-              验证码
+        <div className="login-form">
+          <div className="field">
+            <label className="label" htmlFor="email">
+              邮箱
             </label>
             <input
-              id="code"
+              id="email"
               className="input"
-              inputMode="numeric"
-              maxLength={6}
-              placeholder="6 位数字验证码"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={step === "code"}
             />
-          </>
-        )}
+          </div>
 
-        <div style={{ height: 16, display: "flex", gap: 8 }}>
-          {step === "email" ? (
-            <button className="btn btn-primary" disabled={busy} onClick={requestCode}>
-              {busy ? <span className="spinner" /> : "发送验证码"}
-            </button>
-          ) : (
-            <>
-              <button className="btn btn-primary" disabled={busy} onClick={verifyCode}>
-                {busy ? <span className="spinner" /> : "登录"}
-              </button>
-              <button
-                className="btn"
-                disabled={busy || countdown > 0}
-                onClick={() => {
-                  setStep("email");
-                  setCode("");
-                }}
-              >
-                更换邮箱
-              </button>
-            </>
+          {step === "code" && (
+            <div className="field">
+              <label className="label" htmlFor="code">
+                验证码
+              </label>
+              <input
+                id="code"
+                className="input"
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="6 位数字验证码"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+              />
+            </div>
           )}
+
+          <div className="login-actions">
+            {step === "email" ? (
+              <button className="btn btn-primary" disabled={busy} onClick={requestCode}>
+                {busy ? <span className="spinner" /> : "发送验证码"}
+              </button>
+            ) : (
+              <>
+                <button className="btn btn-primary" disabled={busy} onClick={verifyCode}>
+                  {busy ? <span className="spinner" /> : "登录"}
+                </button>
+                <button
+                  className="btn"
+                  disabled={busy || countdown > 0}
+                  onClick={() => {
+                    setStep("email");
+                    setCode("");
+                  }}
+                >
+                  更换邮箱
+                </button>
+              </>
+            )}
+          </div>
         </div>
-        <p style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 12 }}>
+
+        <p className="login-terms">
           继续即表示你同意《用户协议》与《隐私政策》。
         </p>
       </div>

@@ -459,6 +459,46 @@ table.list th {
   text-align: center;
 }
 
+/* ---- 登录表单 ---- */
+.login-card {
+  max-width: 460px;
+  margin: 40px auto;
+}
+.login-card h1 {
+  margin: 0 0 10px;
+}
+.login-sub {
+  color: var(--text-dim);
+  font-size: 14px;
+  margin: 0 0 20px;
+}
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field .label {
+  margin-bottom: 0;
+}
+.login-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.login-actions .btn {
+  width: 100%;
+}
+.login-terms {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 18px 0 0;
+}
+
 /* ---- 响应式 ---- */
 @media (max-width: 640px) {
   .container {
@@ -469,5 +509,8 @@ table.list th {
   }
   .qa-message {
     max-width: 100%;
+  }
+  .login-card {
+    margin: 24px auto;
   }
 }
