@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 import { parseFileInWorker } from "@/lib/parser/client";
 import { toProcessedLog, type CombatRun, type ParseResult } from "@/lib/parser/parser";
 import { estimateProcessedLogTokens } from "@/lib/ai/tokens";
-import { getTurnstileToken } from "@/lib/client/turnstile";
+import { useTurnstile } from "@/lib/client/useTurnstile";
 import { dungeonDisplayName } from "@/lib/wcl/dungeon-names";
 import { classDisplayName, specDisplayName } from "@/lib/wcl/class-spec-names";
 import { applyFightSpecs, filterPlayersByFight } from "@/lib/wcl/players";
@@ -76,6 +76,8 @@ export default function HomeUpload() {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const { lang } = useLang();
+  // 不可见（invisible）widget：三处创建复盘动作共享，渲染到隐藏容器无感取 token
+  const { containerRef: turnstileRef, getToken } = useTurnstile("report_create", "invisible");
 
   const [mode, setMode] = useState<"link" | "file">("link");
   const [linkUrl, setLinkUrl] = useState("");
@@ -148,7 +150,7 @@ export default function HomeUpload() {
     if (!linkUrl.trim()) return showError("请粘贴 Warcraft Logs 报告链接");
     setLinkBusy(true);
     try {
-      const turnstileToken = await getTurnstileToken("report_create");
+      const turnstileToken = await getToken();
       const res = await fetch("/api/reports/from-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -192,7 +194,7 @@ export default function HomeUpload() {
     }
     setCreateBusy(true);
     try {
-      const turnstileToken = await getTurnstileToken("report_create");
+      const turnstileToken = await getToken();
       const res = await fetch("/api/reports/from-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -297,7 +299,7 @@ export default function HomeUpload() {
       if (spec.trim()) {
         log.combat.playerSpec = spec.trim();
       }
-      const turnstileToken = await getTurnstileToken("report_create");
+      const turnstileToken = await getToken();
       const res = await fetch("/api/reports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -331,6 +333,8 @@ export default function HomeUpload() {
 
   return (
     <div>
+      {/* Turnstile 不可见 widget 容器（无感人机验证；未配置密钥时为空） */}
+      <div ref={turnstileRef} aria-hidden="true" style={{ display: "none" }} />
       {/* 模式切换 */}
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <button

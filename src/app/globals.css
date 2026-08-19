@@ -498,6 +498,10 @@ table.list th {
   color: var(--text-dim);
   margin: 18px 0 0;
 }
+/* Turnstile 人机验证组件容器（登录页，位于发送验证码按钮下方） */
+.turnstile-widget {
+  min-height: 65px;
+}
 
 /* ---- 响应式 ---- */
 @media (max-width: 640px) {

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { getTurnstileToken } from "@/lib/client/turnstile";
+import { useTurnstile } from "@/lib/client/useTurnstile";
 
 /**
  * 登录页（T12，FR-7）：邮箱 + 验证码（无密码）。
@@ -18,6 +18,9 @@ export default function LoginForm() {
   const [mockHint, setMockHint] = useState("");
   const [countdown, setCountdown] = useState(0);
 
+  // 可见的 managed widget：用户能看到并可交互（若有挑战可点击），token 由 callback 存储
+  const { containerRef, getToken, configured } = useTurnstile("login", "managed");
+
   const requestCode = async () => {
     setError("");
     setMockHint("");
@@ -26,7 +29,7 @@ export default function LoginForm() {
     }
     setBusy(true);
     try {
-      const turnstileToken = await getTurnstileToken("login");
+      const turnstileToken = await getToken();
       const res = await fetch("/api/auth/request-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -133,6 +136,14 @@ export default function LoginForm() {
               </>
             )}
           </div>
+
+          {configured && (
+            <div
+              ref={containerRef}
+              className="turnstile-widget"
+              style={{ display: step === "email" ? undefined : "none" }}
+            />
+          )}
         </div>
 
         <p className="login-terms">
