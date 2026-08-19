@@ -42,6 +42,7 @@ interface LinkPlayer {
 /** 自动对比推荐的候选（与 /api/reports/from-link/recommendations 返回一致）。 */
 interface Recommendation {
   code: string;
+  fightId: number | null;
   dungeon: string;
   level: number | null;
   success: boolean;
@@ -49,6 +50,8 @@ interface Recommendation {
   compSimilarity: number | null;
   routeSimilarity: number | null;
   combined: number | null;
+  keyPercent: number | null;
+  parsePercent: number | null;
   amount: number | null;
   score: number | null;
   medal: string | null;
@@ -486,6 +489,7 @@ export default function HomeUpload() {
                           <th>路线相似</th>
                           <th>时长</th>
                           <th>结果</th>
+                          <th>日志</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -505,7 +509,7 @@ export default function HomeUpload() {
                             </td>
                             <td>{dungeonDisplayName(c.dungeon)}</td>
                             <td>{c.level ?? "-"}</td>
-                            <td>{formatPerformance(c.amount, c.metricName, c.score)}</td>
+                            <td>{formatPerformance(c.keyPercent, c.parsePercent, c.amount, c.metricName)}</td>
                             <td>{formatPercent(c.compSimilarity)}</td>
                             <td>{formatRouteSimilarity(c.routeSimilarity)}</td>
                             <td>{formatDurationSec(c.durationSec)}</td>
@@ -513,6 +517,17 @@ export default function HomeUpload() {
                               <span className={`badge ${c.success ? "badge-ok" : "badge-err"}`}>
                                 {c.success ? "限时" : "超时"}
                               </span>
+                            </td>
+                            <td>
+                              <a
+                                href={c.url}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ color: "var(--accent, #3b82f6)" }}
+                              >
+                                打开 WCL ↗
+                              </a>
                             </td>
                           </tr>
                         ))}
