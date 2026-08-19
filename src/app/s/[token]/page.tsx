@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import ReportContent from "@/components/ReportContent";
 import { getPublicShareData } from "@/lib/share/service";
+import { dungeonDisplayName } from "@/lib/wcl/dungeon-names";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,7 @@ export default async function SharePage({
     <main>
       <div className="card">
         <h1>
-          {data.report.dungeon} · {data.report.level} 层
+          {dungeonDisplayName(data.report.dungeon)} · {data.report.level} 层
         </h1>
         <p>
           <span className="badge">

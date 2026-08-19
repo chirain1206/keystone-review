@@ -6,6 +6,7 @@ import { parseFileInWorker } from "@/lib/parser/client";
 import { toProcessedLog, type CombatRun, type ParseResult } from "@/lib/parser/parser";
 import { estimateProcessedLogTokens } from "@/lib/ai/tokens";
 import { getTurnstileToken } from "@/lib/client/turnstile";
+import { dungeonDisplayName } from "@/lib/wcl/dungeon-names";
 
 /**
  * 首页核心交互（T12）：
@@ -259,7 +260,7 @@ export default function HomeUpload() {
                           }}
                         />
                       </td>
-                      <td>{r.combat.dungeon}</td>
+                      <td>{dungeonDisplayName(r.combat.dungeon)}</td>
                       <td>{r.combat.level}</td>
                       <td>
                         {Math.floor(r.combat.durationSec / 60)} 分{" "}

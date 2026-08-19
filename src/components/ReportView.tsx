@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReportContent from "@/components/ReportContent";
 import { readSseStream } from "@/lib/client/sse";
+import { dungeonDisplayName } from "@/lib/wcl/dungeon-names";
 
 /**
  * 报告页（T12，FR-4/FR-6/FR-8/FR-9）：
@@ -324,7 +325,7 @@ export default function ReportView({ reportId }: { reportId: string }) {
         )}
         <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <h1 style={{ margin: 0 }}>
-            {report!.dungeon} · {report!.level} 层
+            {dungeonDisplayName(report!.dungeon)} · {report!.level} 层
           </h1>
           <div style={{ display: "flex", gap: 8 }}>
             {!shareEnabled ? (
