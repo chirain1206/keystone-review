@@ -30,7 +30,7 @@ APP_URL=https://keystone-review.online；NEXT_PUBLIC_SUPABASE_URL/ANON_KEY；SUP
 | --- | --- |
 | vercel.app 生产部署 | ✅ 构建/路由全绿（Ready） |
 | 自定义域名 DNS/验证 | ✅ Vercel 面板 Valid Configuration |
-| 自定义域名 HTTP 服务 | ⚠️ 边缘同步中（NOT_FOUND，等待生效；截至当日 16:59） |
+| 自定义域名 HTTP 服务 | ✅ 通过（200）——最终根因：Vercel Framework Preset 误判为 Other（静态站）导致无路由；改为 Next.js 后恢复。访问链路=Cloudflare 橙云直连 Vercel（Worker 反代方案已弃用并删除） |
 | 本地全链路（3102） | ✅ 用户验收通过（链接/文件双通道、报告、问答、分享、专家页） |
 
 ## 五、回滚方案
