@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
+import FeedbackButton from "@/components/FeedbackButton";
 import { LangProvider } from "@/components/LangProvider";
 import "./globals.css";
 
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <Link href="/legal/disclaimer">免责声明</Link>
             </footer>
           </div>
+          <FeedbackButton />
         </LangProvider>
       </body>
     </html>
