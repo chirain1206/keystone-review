@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTurnstile } from "@/lib/client/useTurnstile";
 import {
   parseMagicLinkSource,
@@ -34,60 +34,77 @@ export default function LoginForm() {
   const [linkBusy, setLinkBusy] = useState(false);
   // 防止 React 严格模式/重复渲染导致魔法链接 token_hash（一次性）被重复提交
   const linkAttempted = useRef(false);
-  // 防止隐式流 hash token（一次性）被重复消费
-  const hashAttempted = useRef(false);
+  // 隐式流 hash token 消费状态：consumed=已成功登录（防重复消费）；
+  // inFlight=正在消费中（防并发重复）。失败时两者都不置位 → 刷新页面可重试。
+  const hashConsumedRef = useRef(false);
+  const hashInFlightRef = useRef(false);
 
   // 可见的 managed widget：用户能看到并可交互（若有挑战可点击），token 由 callback 存储
   const { containerRef, getToken, configured } = useTurnstile("login", "managed");
 
   // 隐式流自动登录：signInWithOtp 链接的 token 挂在 URL hash（#access_token=...），
-  // 不经过 supabase.co 验证页、不依赖第三方 Cookie。挂载时消费 hash：浏览器端
+  // 不经过 supabase.co 验证页、不依赖第三方 Cookie。消费 hash：浏览器端
   // setSession 校验 → POST /api/auth/session-sync 把会话写入 SSR cookie → 跳首页。
-  useEffect(() => {
-    if (hashAttempted.current) return;
+  // 两个触发场景（见下方两个 effect）：
+  //   A. 新标签页/整页加载打开链接（hash 已存在）→ 挂载时消费；
+  //   B. 当前标签页已在 /login 上，点邮件链接只改变 hash——浏览器对「仅 hash 变化」
+  //      的跳转不重载页面、不重新挂载 React，必须监听 hashchange 兜底消费。
+  const consumeHashSession = useCallback(async () => {
+    if (hashConsumedRef.current || hashInFlightRef.current) return;
     const tokens = parseHashSession(window.location.hash);
     if (!tokens) return;
-    hashAttempted.current = true;
-
-    void (async () => {
-      setBusy(true);
-      setLinkBusy(true);
-      try {
-        const supabase = createSupabaseBrowserClient();
-        const { error: setErr } = await supabase.auth.setSession({
-          access_token: tokens.accessToken,
-          refresh_token: tokens.refreshToken,
-        });
-        if (setErr) {
-          setError("链接已失效，请重新登录");
-          return;
-        }
-        const res = await fetch("/api/auth/session-sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(tokens),
-        });
-        const data = await res.json();
-        if (!data.ok) {
-          setError(data.error ?? "链接已失效，请重新登录");
-          return;
-        }
-        // 清空 hash，避免刷新/回退时重复消费一次性 token
-        window.history.replaceState(
-          null,
-          "",
-          window.location.pathname + window.location.search,
-        );
-        router.push("/");
-        router.refresh();
-      } catch {
-        setError("网络错误，请稍后重试");
-      } finally {
-        setBusy(false);
-        setLinkBusy(false);
+    hashInFlightRef.current = true;
+    setBusy(true);
+    setLinkBusy(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { error: setErr } = await supabase.auth.setSession({
+        access_token: tokens.accessToken,
+        refresh_token: tokens.refreshToken,
+      });
+      if (setErr) {
+        setError("链接已失效，请重新登录");
+        return;
       }
-    })();
+      const res = await fetch("/api/auth/session-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(tokens),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(data.error ?? "链接已失效，请重新登录");
+        return;
+      }
+      hashConsumedRef.current = true;
+      // 清空 hash，避免刷新/回退时重复消费一次性 token
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search,
+      );
+      router.push("/");
+      router.refresh();
+    } catch {
+      setError("网络错误，请稍后重试");
+    } finally {
+      hashInFlightRef.current = false;
+      setBusy(false);
+      setLinkBusy(false);
+    }
   }, [router]);
+
+  // 场景 A：整页加载时 hash 已存在 → 挂载即消费
+  useEffect(() => {
+    void consumeHashSession();
+  }, [consumeHashSession]);
+
+  // 场景 B：同一标签页内 hash 后续变化（点邮件链接、页面不重载）→ 监听兜底
+  useEffect(() => {
+    const onHashChange = () => void consumeHashSession();
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [consumeHashSession]);
 
   // 魔法链接自动登录：用户点击邮件链接后带 ?token_hash=...（老形式 ?code=...）
   // 回到本页 → 直接建立会话。source 一并上报，供服务端对老形式 ?code= 做 signup 回退。
