@@ -14,7 +14,6 @@ import {
   LOGIN_LINK_SENT_MESSAGE,
   nextStepAfterSend,
 } from "@/lib/auth/login-flow";
-import { createSupabaseBrowserClient } from "@/lib/auth/supabase-browser";
 import { parseHashSession } from "@/lib/auth/hash-session";
 
 /**
@@ -43,8 +42,11 @@ export default function LoginForm() {
   const { containerRef, getToken, configured } = useTurnstile("login", "managed");
 
   // 隐式流自动登录：signInWithOtp 链接的 token 挂在 URL hash（#access_token=...），
-  // 不经过 supabase.co 验证页、不依赖第三方 Cookie。消费 hash：浏览器端
-  // setSession 校验 → POST /api/auth/session-sync 把会话写入 SSR cookie → 跳首页。
+  // 不经过 supabase.co 验证页、不依赖第三方 Cookie。消费 hash：直接 POST
+  // /api/auth/session-sync，由服务端做权威校验（GoTrue 真实验签）并写入 SSR cookie。
+  // 注意：浏览器端不再用 supabase-js 直连 supabase.co 做「预校验」——其 setSession
+  // 内部会跨域直连 GoTrue 验证 token，在中国网络环境易被安全软件/浏览器插件拦截
+  // （且该预校验本就多余：服务端 setSession 同样会真实验签）。
   // 两个触发场景（见下方两个 effect）：
   //   A. 新标签页/整页加载打开链接（hash 已存在）→ 挂载时消费；
   //   B. 当前标签页已在 /login 上，点邮件链接只改变 hash——浏览器对「仅 hash 变化」
@@ -57,15 +59,6 @@ export default function LoginForm() {
     setBusy(true);
     setLinkBusy(true);
     try {
-      const supabase = createSupabaseBrowserClient();
-      const { error: setErr } = await supabase.auth.setSession({
-        access_token: tokens.accessToken,
-        refresh_token: tokens.refreshToken,
-      });
-      if (setErr) {
-        setError("链接已失效，请重新登录");
-        return;
-      }
       const res = await fetch("/api/auth/session-sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
