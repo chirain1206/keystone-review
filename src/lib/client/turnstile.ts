@@ -3,20 +3,19 @@
 /**
  * Turnstile 客户端辅助（T9/T12）。
  *
- * 关键修复：token 只能从「已渲染的 widget」取得——必须先 turnstile.render() 渲染，
- * 再由 callback 回传 token。旧实现只加载脚本后直接 execute(SITE_KEY)，未渲染任何
- * widget，导致 execute 无法产出 token（catch 吞掉返回 undefined）→ 空 token 提交
- * 被生产服务端拒绝（"人机验证未通过"）。
+ * 关键修复（两处）：
+ *  1) token 只能从「已渲染的 widget」取得——必须先 turnstile.render() 渲染，
+ *     再由 callback 回传 token。旧实现只加载脚本后直接 execute(SITE_KEY)，未渲染任何
+ *     widget，导致 execute 无法产出 token（catch 吞掉返回 undefined）→ 空 token 提交
+ *     被生产服务端拒绝（"人机验证未通过"）。
+ *  2) token 单次有效：siteverify 消费一次后即失效。widget 处于「已解决」状态时
+ *     execute() 只会把上次的旧 token 原样经 callback 返回 → 二次提交被服务器判
+ *     "timeout-or-duplicate" 拒绝（线上实战踩坑：预览通过、创建复盘必挂）。
+ *     因此每次 getToken() 都先 reset() 让 widget 回到未解决态，再 execute() 取新 token。
  *
  * 两种 widget 模式：
  *  - managed（可见）：登录页使用，用户能看到并可交互（若有挑战可点击）。
  *  - invisible（不可见）：首页创建复盘等动作使用，渲染到隐藏容器无感取 token。
- *
- * token 生命周期：
- *  - callback 回传后缓存；managed 模式 300 秒（官方有效期）内复用，过期重新
- *    execute(widgetId) 触发刷新并等待 callback。
- *  - invisible 模式每次 getToken() 都重新 execute 取新 token——Turnstile token
- *    单次有效（siteverify 后即失效），同一 token 不能跨两次提交复用。
  *
  * 未配置 NEXT_PUBLIC_TURNSTILE_SITE_KEY 时，所有方法静默返回 undefined/false，
  * 与旧 getTurnstileToken 行为一致（服务端 mock 模式放行）。
@@ -47,9 +46,6 @@ interface TurnstileRenderOptions {
 }
 
 const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
-
-/** Turnstile token 官方有效期 300 秒；留 5 秒余量提前刷新，避免提交途中过期。 */
-const TOKEN_TTL_MS = 295_000;
 
 /** execute 后等待 callback 的安全超时，防止无回调时提交永久挂起。 */
 const TOKEN_WAIT_TIMEOUT_MS = 60_000;
@@ -85,13 +81,11 @@ export function isTurnstileConfigured(): boolean {
 export type TurnstileMode = "managed" | "invisible";
 
 /**
- * 单个 Turnstile widget 句柄：render() 渲染后，getToken() 复用/刷新 token。
+ * 单个 Turnstile widget 句柄：render() 渲染后，getToken() 每次 reset+execute 取新 token。
  */
 export class TurnstileWidget {
   private widgetId: string | null = null;
   private container: HTMLElement | null = null;
-  private token: string | null = null;
-  private tokenIssuedAt = 0;
   private pendingResolve: ((token: string | undefined) => void) | null = null;
   private pendingTimer: ReturnType<typeof setTimeout> | null = null;
   private renderPromise: Promise<boolean> | null = null;
@@ -131,22 +125,14 @@ export class TurnstileWidget {
   }
 
   /**
-   * 获取可用 token：
-   *  - managed：300 秒内复用缓存（callback 已回传），过期/缺失时 execute 重取并等待 callback。
-   *  - invisible：每次重新 execute 取新 token（token 单次有效）。
+   * 获取一个全新的有效 token：先 reset（回到未解决态）再 execute 并等待 callback。
+   * token 单次有效，每次调用必然重新挑战，绝不跨提交复用旧 token。
    */
   async getToken(): Promise<string | undefined> {
     if (!SITE_KEY) return undefined;
     if (!this.renderPromise) return undefined; // 尚未渲染
     const ready = await this.renderPromise;
     if (!ready || !this.widgetId || !window.turnstile) return undefined;
-    if (
-      this.mode === "managed" &&
-      this.token &&
-      Date.now() - this.tokenIssuedAt < TOKEN_TTL_MS
-    ) {
-      return this.token;
-    }
     return this.waitForToken();
   }
 
@@ -160,8 +146,6 @@ export class TurnstileWidget {
       }
     }
     this.widgetId = null;
-    this.token = null;
-    this.tokenIssuedAt = 0;
     this.settle(undefined);
   }
 
@@ -170,6 +154,9 @@ export class TurnstileWidget {
       this.pendingResolve = resolve;
       this.pendingTimer = setTimeout(() => this.settle(undefined), TOKEN_WAIT_TIMEOUT_MS);
       try {
+        // 关键：先 reset 再 execute。已解决的 widget 上 execute 只会经 callback 原样
+        // 返回旧 token（单次有效、上次已被 siteverify 消费）→ 必须重置换新 token。
+        window.turnstile!.reset(this.widgetId!);
         window.turnstile!.execute(this.widgetId!);
       } catch {
         this.settle(undefined);
@@ -178,19 +165,14 @@ export class TurnstileWidget {
   }
 
   private onToken(token: string): void {
-    this.token = token;
-    this.tokenIssuedAt = Date.now();
     this.settle(token);
   }
 
   private onExpired(): void {
-    this.token = null;
-    this.tokenIssuedAt = 0;
+    this.settle(undefined);
   }
 
   private onError(): void {
-    this.token = null;
-    this.tokenIssuedAt = 0;
     this.settle(undefined);
   }
 

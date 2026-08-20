@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * Turnstile 客户端辅助测试（T9/T12 修复验证）。
  * 在 node 环境下 mock 全局 window.turnstile，覆盖：
  *  - 未配置密钥 → 跳过（不触碰 window）
- *  - managed：render 选项正确 + token 300 秒内复用 + 过期重取
- *  - invisible：每次 getToken 重新 execute（token 单次有效）
+ *  - managed：render 选项正确 + 每次 getToken 都 reset+execute 取新 token（不跨提交复用）
+ *  - invisible：同上（token 单次有效，siteverify 消费后即失效）
  */
 
 const SITE_KEY = "test-site-key";
@@ -93,7 +93,7 @@ describe("Turnstile 客户端辅助", () => {
       expect(typeof options["error-callback"]).toBe("function");
     });
 
-    it("managed：token 300 秒内复用（execute 仅触发一次）", async () => {
+    it("managed：每次 getToken 都 reset+execute 取新 token（不跨提交复用）", async () => {
       const { TurnstileWidget } = await loadModule();
       const mock = createTurnstileMock();
       vi.stubGlobal("window", { turnstile: mock.api });
@@ -104,38 +104,28 @@ describe("Turnstile 客户端辅助", () => {
       const t1 = await widget.getToken();
       expect(t1).toBe("token-1");
       expect(mock.api.execute).toHaveBeenCalledTimes(1);
+      expect(mock.api.reset).toHaveBeenCalledTimes(1);
 
-      // 仍在有效期内：复用缓存，不再 execute
+      // 第二次：先 reset 回未解决态再 execute → 全新 token（旧 token 已被 siteverify 消费）
       const t2 = await widget.getToken();
-      expect(t2).toBe("token-1");
-      expect(mock.api.execute).toHaveBeenCalledTimes(1);
+      expect(t2).toBe("token-2");
+      expect(mock.api.execute).toHaveBeenCalledTimes(2);
+      expect(mock.api.reset).toHaveBeenCalledTimes(2);
     });
 
-    it("managed：token 过期后重新 execute 等待 callback", async () => {
+    it("managed：reset 后即使不等待过期也能连续取新 token", async () => {
       const { TurnstileWidget } = await loadModule();
       const mock = createTurnstileMock();
       vi.stubGlobal("window", { turnstile: mock.api });
 
-      let now = 1_000_000_000;
-      vi.spyOn(Date, "now").mockImplementation(() => now);
-
       const widget = new TurnstileWidget("login", "managed");
       await widget.render({} as HTMLElement);
 
-      const t1 = await widget.getToken();
-      expect(t1).toBe("token-1");
-      expect(mock.api.execute).toHaveBeenCalledTimes(1);
-
-      // +60s：仍在 295s 有效期内 → 复用
-      now += 60_000;
       expect(await widget.getToken()).toBe("token-1");
-      expect(mock.api.execute).toHaveBeenCalledTimes(1);
-
-      // 累计 +360s：超过 295s → 过期重取
-      now += 300_000;
-      const t3 = await widget.getToken();
-      expect(t3).toBe("token-2");
-      expect(mock.api.execute).toHaveBeenCalledTimes(2);
+      expect(await widget.getToken()).toBe("token-2");
+      expect(await widget.getToken()).toBe("token-3");
+      expect(mock.api.execute).toHaveBeenCalledTimes(3);
+      expect(mock.api.reset).toHaveBeenCalledTimes(3);
     });
 
     it("managed：expired-callback 清空缓存后重新 execute", async () => {
@@ -157,7 +147,7 @@ describe("Turnstile 客户端辅助", () => {
       expect(mock.api.execute).toHaveBeenCalledTimes(2);
     });
 
-    it("invisible：每次 getToken 重新 execute 取新 token（不跨提交复用）", async () => {
+    it("invisible：每次 getToken 都 reset+execute 取新 token（不跨提交复用）", async () => {
       const { TurnstileWidget } = await loadModule();
       const mock = createTurnstileMock();
       vi.stubGlobal("window", { turnstile: mock.api });
@@ -171,6 +161,7 @@ describe("Turnstile 客户端辅助", () => {
       expect(await widget.getToken()).toBe("token-1");
       expect(await widget.getToken()).toBe("token-2");
       expect(mock.api.execute).toHaveBeenCalledTimes(2);
+      expect(mock.api.reset).toHaveBeenCalledTimes(2);
     });
 
     it("remove：卸载时调用 turnstile.remove 并清理", async () => {
