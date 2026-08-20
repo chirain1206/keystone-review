@@ -2,15 +2,24 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth/provider";
 import { getRepo } from "@/lib/db";
-import { getWclReportMeta, parseWclUrl, selectFight, type WclFight } from "@/lib/wcl/adapter";
+import {
+  getWclReportMeta,
+  getCompareBaseline,
+  parseWclUrl,
+  selectFight,
+  type WclFight,
+} from "@/lib/wcl/adapter";
 import { applyFightSpecs, filterPlayersByFight, preselectPlayerId, type WclPlayer } from "@/lib/wcl/players";
+import { getFightEvents } from "@/lib/wcl/events";
+import { buildProcessedLogFromWcl } from "@/lib/wcl/to-processed";
 import type { ProcessedLog } from "@/lib/parser/schema";
 import { estimateProcessedLogTokens } from "@/lib/ai/tokens";
 import { enforceCreateLimits } from "@/lib/quota/enforce";
 import { verifyTurnstile } from "@/lib/turnstile/adapter";
 import { getClientIp } from "@/lib/net/client-ip";
 
-export const maxDuration = 30;
+// Vercel Hobby 上限 60s：创建模式要串行拉主链接元数据 + 对比基准 + 事件，30s 易超时
+export const maxDuration = 60;
 
 const bodySchema = z.object({
   url: z.string().trim().url("链接格式不正确"),
@@ -29,6 +38,7 @@ const bodySchema = z.object({
  * 事件拉取失败/超配额 → 降级为仅元数据（报告标注"数据不足"，AI 如实回答）。
  */
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
   const res = NextResponse.json<{ ok: boolean }>({ ok: false });
   const user = await getCurrentUser(req, res);
   if (!user) {
@@ -40,10 +50,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "请粘贴有效的 Warcraft Logs 报告链接" }, { status: 400 });
   }
   const { url, compareUrl, fightId, playerId, turnstileToken } = parsed.data;
+  console.log("[from-link] 请求:", { mode: playerId === undefined ? "preview" : "create", url, fightId, playerId, hasCompare: Boolean(compareUrl) });
 
   // 主链接元数据（战斗 + 玩家列表 + 上传者）
   const metaResult = await getWclReportMeta(url);
   if (!metaResult.ok) {
+    console.error("[from-link] 主链接元数据获取失败:", metaResult.code, metaResult.message, url);
     const status = metaResult.code === "FETCH_FAILED" ? 502 : 400;
     return NextResponse.json({ ok: false, code: metaResult.code, error: metaResult.message }, { status });
   }
@@ -97,15 +109,27 @@ export async function POST(req: NextRequest) {
 
   const player = fightPlayers.find((p) => p.id === playerId);
   if (!player) {
+    console.error("[from-link] 复盘对象不在战斗玩家列表中:", { fightId, playerId });
     return NextResponse.json({ ok: false, error: "请选择有效的复盘对象" }, { status: 400 });
   }
 
-  // 对比基准（失败降级，不阻塞）
+  // 对比基准 + 事件拉取并行（互不依赖；各自失败降级，不阻塞建报告）
+  const region = parseWclUrl(url).region ?? "www";
+  const comparePromise = compareUrl ? getCompareBaseline(compareUrl) : null;
+  const eventsPromise = getFightEvents({
+    code: metaResult.meta.code,
+    region,
+    fightId: fight.id,
+    playerId: player.id,
+    fightStartMs: fight.startTime ?? 0,
+    fightEndMs: fight.endTime ?? fight.durationSec * 1000,
+    isMock,
+  });
+
   let compareMeta: { url: string; title?: string; code?: string; note?: string } | null = null;
-  if (compareUrl) {
-    const { getCompareBaseline } = await import("@/lib/wcl/adapter");
-    const baseline = await getCompareBaseline(compareUrl);
-    if (baseline.ok) {
+  try {
+    const baseline = await comparePromise;
+    if (baseline?.ok && compareUrl) {
       compareMeta = {
         url: compareUrl,
         title: baseline.meta.title,
@@ -115,27 +139,19 @@ export async function POST(req: NextRequest) {
           .map((f) => `${f.name} ${f.keystoneLevel}层 ${f.success ? "限时" : "超时"}`)
           .join("；")}`,
       };
-    } else {
+    } else if (compareUrl) {
       compareMeta = { url: compareUrl, note: "对比基准获取失败，本场不含对比章节" };
     }
+  } catch (err) {
+    console.error("[from-link] 对比基准获取异常:", err);
+    if (compareUrl) compareMeta = { url: compareUrl, note: "对比基准获取失败，本场不含对比章节" };
   }
 
   // 拉取所选玩家该场战斗的必要事件 → FR-10；失败/无事件降级为仅元数据
-  const region = parseWclUrl(url).region ?? "www";
   let log: ProcessedLog;
   let dataInsufficient = false;
   try {
-    const { getFightEvents } = await import("@/lib/wcl/events");
-    const { buildProcessedLogFromWcl } = await import("@/lib/wcl/to-processed");
-    const eventsRes = await getFightEvents({
-      code: metaResult.meta.code,
-      region,
-      fightId: fight.id,
-      playerId: player.id,
-      fightStartMs: fight.startTime ?? 0,
-      fightEndMs: fight.endTime ?? fight.durationSec * 1000,
-      isMock,
-    });
+    const eventsRes = await eventsPromise;
     if (eventsRes.events.length === 0) {
       log = metadataOnlyLog(fight, player, fightPlayers);
       dataInsufficient = true;
@@ -148,7 +164,8 @@ export async function POST(req: NextRequest) {
         truncated: eventsRes.truncated,
       });
     }
-  } catch {
+  } catch (err) {
+    console.error("[from-link] 事件拉取异常:", err);
     log = metadataOnlyLog(fight, player, fightPlayers);
     dataInsufficient = true;
   }
@@ -174,6 +191,7 @@ export async function POST(req: NextRequest) {
     tokenEstimate: estimateProcessedLogTokens(log),
   });
 
+  console.log("[from-link] 创建成功:", { reportId: report.id, elapsedMs: Date.now() - startedAt, dataInsufficient });
   return NextResponse.json({
     ok: true,
     id: report.id,

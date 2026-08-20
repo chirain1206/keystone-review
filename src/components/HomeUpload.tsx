@@ -160,14 +160,16 @@ export default function HomeUpload() {
           turnstileToken,
         }),
       });
-      const data = await res.json();
-      if (!data.ok) {
+      const data = await res.json().catch(() => null);
+      if (!data?.ok) {
         if (res.status === 401) {
           setError("请先登录后再生成复盘");
           router.push("/login");
           return;
         }
-        return showError(data.error ?? "获取失败，请重试");
+        return showError(
+          data?.error?.trim() || (data ? "获取失败，请重试" : "服务暂时无响应，请稍后重试"),
+        );
       }
       const fights = (data.fights ?? []) as LinkFight[];
       const players = (data.players ?? []) as LinkPlayer[];
@@ -206,14 +208,16 @@ export default function HomeUpload() {
           turnstileToken,
         }),
       });
-      const data = await res.json();
-      if (!data.ok) {
+      const data = await res.json().catch(() => null);
+      if (!data?.ok) {
         if (res.status === 401) {
           setError("请先登录后再生成复盘");
           router.push("/login");
           return;
         }
-        return showError(data.error ?? "创建失败，请重试");
+        return showError(
+          data?.error?.trim() || (data ? "创建失败，请重试" : "服务暂时无响应，请稍后重试"),
+        );
       }
       if (data.compareDegraded) setInfo("对比链接获取失败，本场将不含对比章节（不阻塞复盘）。");
       if (data.dataInsufficient) setInfo("事件数据拉取不足，报告将按元数据分析（建议上传文件获取完整分析）。");
@@ -312,14 +316,16 @@ export default function HomeUpload() {
           turnstileToken,
         }),
       });
-      const data = await res.json();
-      if (!data.ok) {
+      const data = await res.json().catch(() => null);
+      if (!data?.ok) {
         if (res.status === 401) {
           setError("请先登录后再生成复盘");
           router.push("/login");
           return;
         }
-        return showError(data.error ?? "创建失败，请重试");
+        return showError(
+          data?.error?.trim() || (data ? "创建失败，请重试" : "服务暂时无响应，请稍后重试"),
+        );
       }
       router.push(`/reports/${data.id}`);
     } catch {

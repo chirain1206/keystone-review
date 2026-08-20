@@ -23,16 +23,19 @@ export async function enforceCreateLimits(
   // 1) Turnstile（配置密钥时强制；mock 模式放行）
   const tv = await verifyTurnstile(turnstileToken, ip);
   if (!tv.ok) {
+    console.error("[enforce] Turnstile 未通过:", tv.error, "ip:", ip, "token:", turnstileToken ? "有" : "无");
     return NextResponse.json({ ok: false, error: tv.error }, { status: 403 });
   }
 
   // 2) 频控：IP 10 分钟 ≤10 次；账号 10 分钟 ≤6 次
   const byIp = checkRateLimit(`create:ip:${ip}`, 10, 10 * 60 * 1000);
   if (!byIp.ok) {
+    console.error("[enforce] IP 频控触发:", ip);
     return NextResponse.json({ ok: false, error: "操作过于频繁，请稍后再试" }, { status: 429 });
   }
   const byUser = checkRateLimit(`create:user:${userId}`, 6, 10 * 60 * 1000);
   if (!byUser.ok) {
+    console.error("[enforce] 账号频控触发:", userId);
     return NextResponse.json({ ok: false, error: "操作过于频繁，请稍后再试" }, { status: 429 });
   }
 
@@ -41,6 +44,7 @@ export async function enforceCreateLimits(
   const timeZone = profile?.timezone || "Asia/Shanghai";
   const quota = await checkDailyQuota(userId, timeZone);
   if (!quota.allowed) {
+    console.error("[enforce] 每日额度用尽:", userId, "used:", quota.used, "limit:", quota.limit);
     return NextResponse.json(
       {
         ok: false,
