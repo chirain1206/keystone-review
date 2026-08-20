@@ -159,6 +159,9 @@ export default function LoginForm() {
     setBusy(true);
     try {
       const turnstileToken = await getToken();
+      if (configured && !turnstileToken) {
+        return setError("安全验证组件未就绪，请刷新页面后重试");
+      }
       const res = await fetch("/api/auth/request-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

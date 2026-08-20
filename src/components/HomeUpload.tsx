@@ -77,7 +77,7 @@ export default function HomeUpload() {
   const fileRef = useRef<HTMLInputElement>(null);
   const { lang } = useLang();
   // 不可见（invisible）widget：三处创建复盘动作共享，渲染到隐藏容器无感取 token
-  const { containerRef: turnstileRef, getToken } = useTurnstile("report_create", "invisible");
+  const { containerRef: turnstileRef, getToken, configured: turnstileConfigured } = useTurnstile("report_create", "invisible");
 
   const [mode, setMode] = useState<"link" | "file">("link");
   const [linkUrl, setLinkUrl] = useState("");
@@ -151,6 +151,9 @@ export default function HomeUpload() {
     setLinkBusy(true);
     try {
       const turnstileToken = await getToken();
+      if (turnstileConfigured && !turnstileToken) {
+        return showError("安全验证组件未就绪，请刷新页面后重试");
+      }
       const res = await fetch("/api/reports/from-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -197,6 +200,9 @@ export default function HomeUpload() {
     setCreateBusy(true);
     try {
       const turnstileToken = await getToken();
+      if (turnstileConfigured && !turnstileToken) {
+        return showError("安全验证组件未就绪，请刷新页面后重试");
+      }
       const res = await fetch("/api/reports/from-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -304,6 +310,9 @@ export default function HomeUpload() {
         log.combat.playerSpec = spec.trim();
       }
       const turnstileToken = await getToken();
+      if (turnstileConfigured && !turnstileToken) {
+        return showError("安全验证组件未就绪，请刷新页面后重试");
+      }
       const res = await fetch("/api/reports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
