@@ -4,22 +4,19 @@ import { getCurrentUser } from "@/lib/auth/provider";
 import { getRepo } from "@/lib/db";
 import {
   getWclReportMeta,
-  getCompareBaseline,
   parseWclUrl,
   selectFight,
-  type WclFight,
 } from "@/lib/wcl/adapter";
-import { applyFightSpecs, filterPlayersByFight, preselectPlayerId, type WclPlayer } from "@/lib/wcl/players";
-import { getFightEvents } from "@/lib/wcl/events";
-import { buildProcessedLogFromWcl } from "@/lib/wcl/to-processed";
-import type { ProcessedLog } from "@/lib/parser/schema";
+import { applyFightSpecs, filterPlayersByFight, preselectPlayerId } from "@/lib/wcl/players";
+import { buildPlaceholderLinkLog } from "@/lib/wcl/to-processed";
+import type { EnrichPayload } from "@/lib/parser/schema";
 import { estimateProcessedLogTokens } from "@/lib/ai/tokens";
 import { enforceCreateLimits } from "@/lib/quota/enforce";
 import { verifyTurnstile } from "@/lib/turnstile/adapter";
 import { getClientIp } from "@/lib/net/client-ip";
 
-// Vercel Hobby 上限 60s：创建模式要串行拉主链接元数据 + 对比基准 + 事件，30s 易超时
-export const maxDuration = 60;
+// 两步式创建：本路由只做元数据校验 + 秒建报告；事件/对比在 enrich 路由独立完成
+export const maxDuration = 30;
 
 const bodySchema = z.object({
   url: z.string().trim().url("链接格式不正确"),
@@ -103,7 +100,9 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ---------- 创建模式：完整防护 + 事件拉取 + 建报告 ----------
+  // ---------- 创建模式：完整防护 → 秒建报告（两步式 FR-1） ----------
+  // 事件/对比拉取耗时可达 60s+，不在本请求内同步执行：先存「占位日志 + 待补充标记」，
+  // 报告页调用 POST /api/reports/:id/enrich 独立完成（各自 60s 额度，超时降级元数据）。
   const limited = await enforceCreateLimits(req, user.id, turnstileToken);
   if (limited) return limited;
 
@@ -113,62 +112,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "请选择有效的复盘对象" }, { status: 400 });
   }
 
-  // 对比基准 + 事件拉取并行（互不依赖；各自失败降级，不阻塞建报告）
   const region = parseWclUrl(url).region ?? "www";
-  const comparePromise = compareUrl ? getCompareBaseline(compareUrl) : null;
-  const eventsPromise = getFightEvents({
-    code: metaResult.meta.code,
-    region,
+  const enrich: EnrichPayload = {
+    url,
     fightId: fight.id,
     playerId: player.id,
-    fightStartMs: fight.startTime ?? 0,
-    fightEndMs: fight.endTime ?? fight.durationSec * 1000,
-    isMock,
-  });
-
-  let compareMeta: { url: string; title?: string; code?: string; note?: string } | null = null;
-  try {
-    const baseline = await comparePromise;
-    if (baseline?.ok && compareUrl) {
-      compareMeta = {
-        url: compareUrl,
-        title: baseline.meta.title,
-        code: baseline.meta.code,
-        note: `对比基准：${baseline.meta.fights
-          .slice(0, 3)
-          .map((f) => `${f.name} ${f.keystoneLevel}层 ${f.success ? "限时" : "超时"}`)
-          .join("；")}`,
-      };
-    } else if (compareUrl) {
-      compareMeta = { url: compareUrl, note: "对比基准获取失败，本场不含对比章节" };
-    }
-  } catch (err) {
-    console.error("[from-link] 对比基准获取异常:", err);
-    if (compareUrl) compareMeta = { url: compareUrl, note: "对比基准获取失败，本场不含对比章节" };
-  }
-
-  // 拉取所选玩家该场战斗的必要事件 → FR-10；失败/无事件降级为仅元数据
-  let log: ProcessedLog;
-  let dataInsufficient = false;
-  try {
-    const eventsRes = await eventsPromise;
-    if (eventsRes.events.length === 0) {
-      log = metadataOnlyLog(fight, player, fightPlayers);
-      dataInsufficient = true;
-    } else {
-      log = buildProcessedLogFromWcl({
-        fight,
-        player,
-        players: fightPlayers,
-        events: eventsRes.events,
-        truncated: eventsRes.truncated,
-      });
-    }
-  } catch (err) {
-    console.error("[from-link] 事件拉取异常:", err);
-    log = metadataOnlyLog(fight, player, fightPlayers);
-    dataInsufficient = true;
-  }
+    region,
+    ...(compareUrl ? { compareUrl } : {}),
+  };
+  const log = buildPlaceholderLinkLog(fight, player, fightPlayers, enrich);
 
   const repo = getRepo();
   const report = await repo.createReport({
@@ -180,7 +132,7 @@ export async function POST(req: NextRequest) {
     playerName: player.name,
     playerClass: player.class,
     result: fight.success,
-    compareMeta,
+    compareMeta: null, // 对比基准由 enrich 拉取后写入
     mock: isMock,
   });
   await repo.saveProcessedLog({
@@ -191,10 +143,11 @@ export async function POST(req: NextRequest) {
     tokenEstimate: estimateProcessedLogTokens(log),
   });
 
-  console.log("[from-link] 创建成功:", { reportId: report.id, elapsedMs: Date.now() - startedAt, dataInsufficient });
+  console.log("[from-link] 创建成功（待 enrich）:", { reportId: report.id, elapsedMs: Date.now() - startedAt });
   return NextResponse.json({
     ok: true,
     id: report.id,
+    needsEnrich: true,
     fight: {
       name: fight.name,
       level: fight.keystoneLevel,
@@ -203,45 +156,5 @@ export async function POST(req: NextRequest) {
       affixes: fight.affixes,
     },
     player: { name: player.name, class: player.class, spec: player.spec },
-    dataInsufficient,
-    compareDegraded: compareUrl ? !compareMeta?.title : false,
   });
-}
-
-/** 事件拉取失败/超配额时的降级日志：仅元数据 + "数据不足"说明（保持 AI 如实回答语义）。 */
-function metadataOnlyLog(fight: WclFight, player: WclPlayer, players: WclPlayer[]): ProcessedLog {
-  return {
-    version: 1,
-    source: "link",
-    combat: {
-      dungeon: fight.name,
-      level: fight.keystoneLevel ?? 2,
-      startTime: 0,
-      endTime: fight.durationSec * 1000,
-      durationSec: fight.durationSec,
-      success: fight.success,
-      players: players.map((p) => ({ name: p.name, class: p.class, spec: p.spec, role: p.role })),
-      playerName: player.name,
-      playerClass: player.class,
-      playerSpec: player.spec,
-    },
-    timeline: [
-      {
-        t: 0,
-        ts: "00:00.000",
-        type: "boss_phase",
-        actor: fight.name,
-        spell: fight.name,
-        note: "WCL 链接数据源：事件拉取失败或超出配额，仅战斗元数据；如需完整事件级分析请上传 WoWCombatLog.txt 文件",
-      },
-    ],
-    aggregate: {
-      interrupts: [],
-      deaths: [],
-      cooldowns: [],
-      vulnerablePhases: [],
-      movement: [],
-      perMinute: [],
-    },
-  };
 }

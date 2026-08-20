@@ -225,8 +225,6 @@ export default function HomeUpload() {
           data?.error?.trim() || (data ? "创建失败，请重试" : "服务暂时无响应，请稍后重试"),
         );
       }
-      if (data.compareDegraded) setInfo("对比链接获取失败，本场将不含对比章节（不阻塞复盘）。");
-      if (data.dataInsufficient) setInfo("事件数据拉取不足，报告将按元数据分析（建议上传文件获取完整分析）。");
       router.push(`/reports/${data.id}`);
     } catch {
       showError("网络错误，请稍后重试");

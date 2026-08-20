@@ -60,8 +60,7 @@ export const vulnerablePhaseSchema = z.object({
 });
 export type VulnerablePhase = z.infer<typeof vulnerablePhaseSchema>;
 
-export const perMinuteBucketSchema = z.object({
-  minute: z.number().int(), // 战斗内第 N 分钟（0 起）
+export const perMinuteBucketSchema = z.object({  minute: z.number().int(), // 战斗内第 N 分钟（0 起）
   player: z.string().max(500),
   casts: z
     .array(z.object({ spell: z.string().max(500), count: z.number().int() }))
@@ -83,12 +82,28 @@ export const aggregateSchema = z.object({
 });
 export type Aggregate = z.infer<typeof aggregateSchema>;
 
+/**
+ * 链接来源报告的「待补充数据」标记（FR-1 两步式创建）。
+ * 存在于 processed_log 中时表示：报告已建、但事件级数据尚未拉取，报告页应先调用
+ * POST /api/reports/:id/enrich 拉取事件与对比基准后再开始生成章节。
+ * 补充完成后保存的日志不再携带该字段。
+ */
+export const enrichSchema = z.object({
+  url: z.string(), // 主 WCL 报告链接
+  fightId: z.number().int(),
+  playerId: z.number().int(), // 报告内 actor id
+  region: z.enum(["www", "cn"]),
+  compareUrl: z.string().optional(),
+});
+export type EnrichPayload = z.infer<typeof enrichSchema>;
+
 export const processedLogSchema = z.object({
   version: z.literal(1),
   source: z.enum(["file", "link"]),
   combat: combatSummarySchema,
   timeline: z.array(timelineEventSchema).max(50000), // 全量关键事件时间线（按 t 排序）
   aggregate: aggregateSchema,
+  enrich: enrichSchema.optional(),
 });
 export type ProcessedLog = z.infer<typeof processedLogSchema>;
 

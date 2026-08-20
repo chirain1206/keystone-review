@@ -189,6 +189,14 @@ export class FileRepo implements Repo {
     });
   }
 
+  async updateReportCompareMeta(reportId: string, compareMeta: Report["compareMeta"]): Promise<void> {
+    await mutate<Report>("reports", (reports) => {
+      const r = reports[reportId];
+      if (!r) return;
+      reports[reportId] = { ...r, compareMeta, updatedAt: now() };
+    });
+  }
+
   async deleteReport(userId: string, reportId: string): Promise<boolean> {
     const r = await this.getReport(userId, reportId);
     if (!r) return false;

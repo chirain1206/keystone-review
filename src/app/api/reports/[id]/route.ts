@@ -27,12 +27,16 @@ export async function GET(
   const chapters = await repo.getChapters(user.id, id);
   const messages = await repo.listMessages(user.id, id);
   const shares = await repo.listShares(user.id, id);
+  // FR-1 两步式：占位日志携带 enrich 标记时，报告页需先拉取战斗数据再开始生成
+  const logRec = await repo.getProcessedLogByReportId(id);
+  const needsEnrich = Boolean(logRec?.log?.enrich);
 
   return NextResponse.json({
     ok: true,
     report,
     chapters,
     messages,
+    needsEnrich,
     share: shares.length > 0 ? { enabled: shares[0].enabled, token: shares[0].token } : null,
   });
 }

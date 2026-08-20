@@ -51,6 +51,8 @@ interface Detail {
   report?: ReportInfo;
   chapters?: Chapter[];
   messages?: Message[];
+  /** FR-1 两步式：true = 占位日志尚未拉取战斗数据，需先 POST enrich 再生成 */
+  needsEnrich?: boolean;
   share?: { enabled: boolean; token: string } | null;
 }
 
@@ -71,6 +73,9 @@ export default function ReportView({ reportId }: { reportId: string }) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [genStarted, setGenStarted] = useState(false);
+  // FR-1 两步式：拉取战斗数据（enrich）状态机
+  const [enrichState, setEnrichState] = useState<"idle" | "running" | "done" | "failed">("idle");
+  const [enrichNote, setEnrichNote] = useState("");
 
   // 问答
   const [question, setQuestion] = useState("");
@@ -116,12 +121,55 @@ export default function ReportView({ reportId }: { reportId: string }) {
     void load();
   }, [load]);
 
+  // FR-1 两步式：占位日志存在 enrich 标记时，先拉取战斗数据再生成（各占独立时间额度）
+  useEffect(() => {
+    if (!detail?.needsEnrich || enrichState !== "idle") return;
+    void runEnrich();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail?.needsEnrich, enrichState]);
+
+  const runEnrich = async () => {
+    setEnrichState("running");
+    setEnrichNote("");
+    setError("");
+    try {
+      const res = await fetch(`/api/reports/${reportId}/enrich`, {
+        method: "POST",
+        cache: "no-store",
+      });
+      if (res.status === 401) {
+        router.push("/login");
+        return;
+      }
+      const data = await res.json().catch(() => null);
+      if (!data?.ok) {
+        setEnrichState("failed");
+        setEnrichNote(data?.error ?? "战斗数据拉取失败，报告将按元数据分析（可刷新页面重试拉取）。");
+        return;
+      }
+      setEnrichState("done");
+      if (data.dataInsufficient) {
+        setEnrichNote("事件数据拉取不足，报告将按元数据分析（建议上传 WoWCombatLog.txt 获取完整分析）。");
+      }
+      if (data.compareDegraded) {
+        setEnrichNote("对比链接获取失败，本场将不含对比章节（不阻塞复盘）。");
+      }
+      void load(); // 刷新：needsEnrich 置空、章节生成自动开始
+    } catch {
+      setEnrichState("failed");
+      setEnrichNote("战斗数据拉取超时，报告将按元数据分析（可刷新页面重试拉取）。");
+    }
+  };
+
   const report = detail?.report;
+  // enrich 未完成（且未失败）时暂缓生成：章节必须基于完整事件数据
+  const enrichBlocking = Boolean(detail?.needsEnrich) && enrichState !== "failed";
   const needGenerate =
     report &&
     chapters.length < 6 &&
     !genStarted &&
-    report.status !== "failed";
+    report.status !== "failed" &&
+    !enrichBlocking;
 
   // 自动开始生成（幂等：已完成章节服务端跳过）
   useEffect(() => {
@@ -367,6 +415,17 @@ export default function ReportView({ reportId }: { reportId: string }) {
           </div>
         )}
         {error && <div className="alert alert-error">{error}</div>}
+        {(detail?.needsEnrich || enrichNote) && (
+          <div className={enrichState === "failed" ? "alert alert-warn" : "alert alert-info"}>
+            {detail?.needsEnrich && enrichState === "running" && (
+              <>
+                <span className="spinner" /> 正在拉取战斗数据（暴雪日志站数据较多时可能需要 10-60 秒）…
+              </>
+            )}
+            {detail?.needsEnrich && enrichState === "idle" && "准备拉取战斗数据…"}
+            {enrichNote}
+          </div>
+        )}
       </div>
 
       {/* 章节进度 */}

@@ -2,6 +2,7 @@ import type {
   Aggregate,
   CombatPlayer,
   CombatSummary,
+  EnrichPayload,
   ProcessedLog,
   TimelineEvent,
   VulnerablePhase,
@@ -32,6 +33,56 @@ export interface WclToProcessedInput {
   events: WclRawEvent[];
   /** 事件拉取是否达到分页上限（可能不完整）。 */
   truncated?: boolean;
+}
+
+/**
+ * 链接来源报告的「占位日志」：仅战斗元数据 + 待补充标记（FR-1 两步式创建）。
+ * 创建复盘时秒存该占位，报告页触发 enrich 拉取事件后覆盖为完整日志。
+ * enrich 兜底降级（事件拉取失败/超时）也用它，此时不带 enrich 标记（不再重试循环）。
+ */
+export function buildPlaceholderLinkLog(
+  fight: WclFight,
+  player: WclPlayer,
+  players: WclPlayer[],
+  enrich?: EnrichPayload,
+): ProcessedLog {
+  return {
+    version: 1,
+    source: "link",
+    combat: {
+      dungeon: fight.name,
+      level: fight.keystoneLevel ?? 2,
+      startTime: 0,
+      endTime: fight.durationSec * 1000,
+      durationSec: fight.durationSec,
+      success: fight.success,
+      players: players.map((p) => ({ name: p.name, class: p.class, spec: p.spec, role: p.role })),
+      playerName: player.name,
+      playerClass: player.class,
+      playerSpec: player.spec,
+    },
+    timeline: [
+      {
+        t: 0,
+        ts: "00:00.000",
+        type: "boss_phase",
+        actor: fight.name,
+        spell: fight.name,
+        note: enrich
+          ? "WCL 链接数据源：事件数据正在拉取中"
+          : "WCL 链接数据源：事件拉取失败或超出配额，仅战斗元数据；如需完整事件级分析请上传 WoWCombatLog.txt 文件",
+      },
+    ],
+    aggregate: {
+      interrupts: [],
+      deaths: [],
+      cooldowns: [],
+      vulnerablePhases: [],
+      movement: [],
+      perMinute: [],
+    },
+    ...(enrich ? { enrich } : {}),
+  };
 }
 
 const APPLY_TYPES = new Set(["applybuff", "applybuffstack", "refreshbuff"]);

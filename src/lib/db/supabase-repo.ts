@@ -147,6 +147,13 @@ export class SupabaseRepo implements Repo {
       .eq("id", reportId);
   }
 
+  async updateReportCompareMeta(reportId: string, compareMeta: Report["compareMeta"]): Promise<void> {
+    await client()
+      .from("reports")
+      .update({ compare_meta: compareMeta, updated_at: new Date().toISOString() })
+      .eq("id", reportId);
+  }
+
   async deleteReport(userId: string, reportId: string): Promise<boolean> {
     assertUserId(userId);
     const { count } = await client()

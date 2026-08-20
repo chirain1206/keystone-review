@@ -31,6 +31,8 @@ export interface Repo {
   getReportById(reportId: string): Promise<Report | null>;
   listReportsByUser(userId: string): Promise<Report[]>;
   updateReportStatus(reportId: string, status: Report["status"]): Promise<void>;
+  /** enrich 完成后写入对比基准元数据（FR-1 两步式：创建时为空，enrich 补齐）。 */
+  updateReportCompareMeta(reportId: string, compareMeta: Report["compareMeta"]): Promise<void>;
   /** 属主删除，级联删除 processed_log/chapters/conversations/messages/shares */
   deleteReport(userId: string, reportId: string): Promise<boolean>;
 
