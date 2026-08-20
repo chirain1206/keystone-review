@@ -14,6 +14,8 @@ import {
   LOGIN_LINK_SENT_MESSAGE,
   nextStepAfterSend,
 } from "@/lib/auth/login-flow";
+import { createSupabaseBrowserClient } from "@/lib/auth/supabase-browser";
+import { parseHashSession } from "@/lib/auth/hash-session";
 
 /**
  * 登录页（T12，FR-7）：统一为「邮箱链接登录」——输邮箱 → 发送登录链接 → 点击邮件链接完成。
@@ -32,9 +34,60 @@ export default function LoginForm() {
   const [linkBusy, setLinkBusy] = useState(false);
   // 防止 React 严格模式/重复渲染导致魔法链接 token_hash（一次性）被重复提交
   const linkAttempted = useRef(false);
+  // 防止隐式流 hash token（一次性）被重复消费
+  const hashAttempted = useRef(false);
 
   // 可见的 managed widget：用户能看到并可交互（若有挑战可点击），token 由 callback 存储
   const { containerRef, getToken, configured } = useTurnstile("login", "managed");
+
+  // 隐式流自动登录：signInWithOtp 链接的 token 挂在 URL hash（#access_token=...），
+  // 不经过 supabase.co 验证页、不依赖第三方 Cookie。挂载时消费 hash：浏览器端
+  // setSession 校验 → POST /api/auth/session-sync 把会话写入 SSR cookie → 跳首页。
+  useEffect(() => {
+    if (hashAttempted.current) return;
+    const tokens = parseHashSession(window.location.hash);
+    if (!tokens) return;
+    hashAttempted.current = true;
+
+    void (async () => {
+      setBusy(true);
+      setLinkBusy(true);
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const { error: setErr } = await supabase.auth.setSession({
+          access_token: tokens.accessToken,
+          refresh_token: tokens.refreshToken,
+        });
+        if (setErr) {
+          setError("链接已失效，请重新登录");
+          return;
+        }
+        const res = await fetch("/api/auth/session-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(tokens),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          setError(data.error ?? "链接已失效，请重新登录");
+          return;
+        }
+        // 清空 hash，避免刷新/回退时重复消费一次性 token
+        window.history.replaceState(
+          null,
+          "",
+          window.location.pathname + window.location.search,
+        );
+        router.push("/");
+        router.refresh();
+      } catch {
+        setError("网络错误，请稍后重试");
+      } finally {
+        setBusy(false);
+        setLinkBusy(false);
+      }
+    })();
+  }, [router]);
 
   // 魔法链接自动登录：用户点击邮件链接后带 ?token_hash=...（老形式 ?code=...）
   // 回到本页 → 直接建立会话。source 一并上报，供服务端对老形式 ?code= 做 signup 回退。

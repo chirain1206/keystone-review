@@ -14,17 +14,23 @@ import { getStoredCode } from "@/lib/auth/guard";
  * 时 sendEmail 落控制台（mock 行为），但验证码已写入 guard 存储可断言。
  */
 
-const { signInWithOtp } = vi.hoisted(() => ({ signInWithOtp: vi.fn() }));
+const { signInWithOtp, createClient } = vi.hoisted(() => ({
+  signInWithOtp: vi.fn(),
+  createClient: vi.fn(),
+}));
 
 vi.mock("@supabase/ssr", () => ({
   createServerClient: () => ({
     auth: {
-      signInWithOtp,
       verifyOtp: vi.fn(),
       getUser: vi.fn(),
       signOut: vi.fn(),
     },
   }),
+}));
+
+vi.mock("@supabase/supabase-js", () => ({
+  createClient,
 }));
 
 const dir = path.join(os.tmpdir(), `wow-analyzer-email-mode-${Date.now()}`);
@@ -65,9 +71,11 @@ describe("EMAIL_MODE 发码分支选择", () => {
     delete process.env.EMAIL_MODE;
   });
 
-  it("supabase 模式（默认）：requestCode 走 signInWithOtp 并带 emailRedirectTo=/login，不落地本地验证码", async () => {
+  it("supabase 模式（默认）：requestCode 用隐式流客户端发 signInWithOtp，带 emailRedirectTo=/login，不落地本地验证码", async () => {
     delete process.env.EMAIL_MODE;
     signInWithOtp.mockClear();
+    createClient.mockClear();
+    createClient.mockReturnValue({ auth: { signInWithOtp } });
     signInWithOtp.mockResolvedValue({ error: null });
 
     const auth = makeProvider();
@@ -75,6 +83,14 @@ describe("EMAIL_MODE 发码分支选择", () => {
     const r = await auth.requestCode(email);
 
     expect(r.ok).toBe(true);
+    // 发链接的客户端必须为隐式流（flowType: "implicit"）：链接 token 挂 hash，
+    // 不经 supabase.co 验证页、不依赖第三方 Cookie。
+    expect(createClient).toHaveBeenCalledTimes(1);
+    expect(createClient).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      { auth: { flowType: "implicit", persistSession: false, autoRefreshToken: false } },
+    );
     expect(signInWithOtp).toHaveBeenCalledTimes(1);
     expect(signInWithOtp).toHaveBeenCalledWith({
       email,

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createServerClient } from "@supabase/ssr";
-import { createClient, type VerifyOtpParams } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient, type VerifyOtpParams } from "@supabase/supabase-js";
 import type { NextRequest, NextResponse } from "next/server";
 import { envConfig } from "@/lib/env";
 import type { AuthProvider, AuthUser } from "@/lib/auth/types";
@@ -35,6 +35,40 @@ import { getRepo } from "@/lib/db";
 
 const sessionKey = (token: string) => `session:${token}`;
 
+/**
+ * 服务端 anon 客户端（会话 cookie 桥接）：verifyOtp / getUser / signOut 以及
+ * session-sync 的 setSession 共用。cookie 通过 createServerClient 的 setAll 桥接到
+ * response（httpOnly）。
+ *
+ * 注意：@supabase/ssr 0.12.x 把 flowType 硬编码为 "pkce"（写在展开用户选项之后），
+ * 这里传 flowType 也会被覆盖 —— 发链接（signInWithOtp）改用隐式流 otpClient()，
+ * 本客户端仅承载不依赖 flowType 的会话操作。
+ */
+export function createSupabaseServerClient(
+  req: NextRequest,
+  res: NextResponse,
+): SupabaseClient {
+  return createServerClient(envConfig.supabaseUrl, envConfig.supabaseAnonKey, {
+    cookies: {
+      getAll: () => req.cookies.getAll(),
+      setAll: (list) => {
+        const secure = envConfig.appUrl.startsWith("https://");
+        for (const c of list) {
+          res.cookies.set({
+            name: c.name,
+            value: c.value,
+            httpOnly: true,
+            sameSite: "lax",
+            secure,
+            path: c.options?.path ?? "/",
+            maxAge: c.options?.maxAge,
+          });
+        }
+      },
+    },
+  });
+}
+
 export class SupabaseAuthProvider implements AuthProvider {
   readonly mode = "supabase" as const;
 
@@ -47,26 +81,19 @@ export class SupabaseAuthProvider implements AuthProvider {
     return envConfig.emailMode;
   }
 
-  /** anon 客户端（supabase 模式：OTP + 会话）。 */
+  /** anon 客户端（supabase 模式：会话 cookie 桥接，verifyOtp / getUser / signOut）。 */
   private client() {
-    return createServerClient(envConfig.supabaseUrl, envConfig.supabaseAnonKey, {
-      cookies: {
-        getAll: () => this.req.cookies.getAll(),
-        setAll: (list) => {
-          const secure = envConfig.appUrl.startsWith("https://");
-          for (const c of list) {
-            this.res.cookies.set({
-              name: c.name,
-              value: c.value,
-              httpOnly: true,
-              sameSite: "lax",
-              secure,
-              path: c.options?.path ?? "/",
-              maxAge: c.options?.maxAge,
-            });
-          }
-        },
-      },
+    return createSupabaseServerClient(this.req, this.res);
+  }
+
+  /**
+   * 隐式流 anon 客户端：仅用于 signInWithOtp 发登录链接。隐式流下链接 token 挂在
+   * URL hash（#access_token=...），全程不经 supabase.co 验证页、不依赖第三方 Cookie，
+   * 解决现代浏览器拦第三方 Cookie 导致 PKCE 交换失败的问题。
+   */
+  private otpClient() {
+    return createClient(envConfig.supabaseUrl, envConfig.supabaseAnonKey, {
+      auth: { flowType: "implicit", persistSession: false, autoRefreshToken: false },
     });
   }
 
@@ -97,8 +124,10 @@ export class SupabaseAuthProvider implements AuthProvider {
     }
 
     // supabase 模式：Supabase 自带邮件服务发送（无需 SMTP/Resend 配置）
-    // emailRedirectTo 固定跳回 /login 回调，Supabase 稳定发 sign-in 链接而非验证码。
-    const { error } = await this.client().auth.signInWithOtp({
+    // emailRedirectTo 固定跳回 /login 回调。用隐式流 otpClient 发链接，token 挂在
+    // hash（#access_token=...），不依赖第三方 Cookie（现代浏览器拦第三方 Cookie 时
+    // PKCE 流会失效，隐式流直接跳回本站完成登录）。
+    const { error } = await this.otpClient().auth.signInWithOtp({
       email,
       options: {
         shouldCreateUser: true,
