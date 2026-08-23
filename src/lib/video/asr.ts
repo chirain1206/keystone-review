@@ -84,8 +84,6 @@ function spawnFfmpeg(args: string[]): Promise<void> {
   });
 }
 
-export const ASR_MAX_BYTES = 20 * 1024 * 1024;
-
 /** SenseVoiceSmall 官方模型 id（可用 ASR_MODEL 覆盖）。 */
 export const ASR_MODEL = process.env.ASR_MODEL || "FunAudioLLM/SenseVoiceSmall";
 
