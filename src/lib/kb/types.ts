@@ -20,6 +20,8 @@ export interface KbMeta {
   origin: "curated" | "inferred" | "community";
   /** 状态：active=生效（可注入）/ candidate=候选（绝不注入正式分析）/ deprecated=弃用 */
   status: "active" | "candidate" | "deprecated";
+  /** 来源文件名（入库时写入；同源过期片段清理按 source_url+file 精确归属）。 */
+  file?: string;
   /** 提交人邮箱（专家社区提交接口写入）。 */
   submitted_by?: string;
   /** 提交时间 ISO（专家社区提交接口写入）。 */

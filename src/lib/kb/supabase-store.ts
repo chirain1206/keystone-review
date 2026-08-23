@@ -87,16 +87,23 @@ export class SupabaseKbStore implements KbStore {
     if (filter.status) q = q.eq("meta->>status", filter.status);
     if (filter.origin) q = q.eq("meta->>origin", filter.origin);
     if (filter.class) q = q.eq("meta->>class", filter.class);
-    if (filter.idPrefix) q = q.ilike("id::text", `${filter.idPrefix}%`);
-    if (filter.limit && filter.limit > 0) q = q.limit(filter.limit);
+    if (filter.limit && filter.limit > 0) q = q.limit(filter.limit * 5); // idPrefix 在 JS 侧过滤，留余量
     q = q.order("id", { ascending: true });
     const { data, error } = await q;
     if (error) throw new Error(`知识库列表查询失败：${error.message}`);
-    return ((data ?? []) as { id: string; chunk_text: string; meta: KbMeta }[]).map((r) => ({
+    let rows = ((data ?? []) as { id: string; chunk_text: string; meta: KbMeta }[]).map((r) => ({
       id: r.id,
       chunkText: r.chunk_text,
       meta: r.meta,
     }));
+    // idPrefix 在 JS 侧过滤：uuid 列无法直接 ilike（PostgREST 会生成 uuid ~~* 报错）
+    if (filter.idPrefix) {
+      rows = rows.filter((r) => r.id.startsWith(filter.idPrefix!));
+    }
+    if (filter.limit && filter.limit > 0 && rows.length > filter.limit) {
+      rows = rows.slice(0, filter.limit);
+    }
+    return rows;
   }
 
   async updateStatus(
@@ -134,6 +141,31 @@ export class SupabaseKbStore implements KbStore {
     const { error } = await client().from("kb_documents").delete().in("id", ids);
     if (error) throw new Error(`知识库删除失败：${error.message}`);
     return ids.length;
+  }
+
+  async deleteStaleChunks(
+    targets: { sourceUrl: string; origin: KbMeta["origin"]; file: string; keepHashes: string[] }[],
+  ): Promise<number> {
+    let removed = 0;
+    for (const t of targets) {
+      if (t.keepHashes.length === 0) continue;
+      const { data, error } = await client()
+        .from("kb_documents")
+        .select("id, source_hash")
+        .eq("meta->>source_url", t.sourceUrl)
+        .eq("meta->>origin", t.origin)
+        .eq("meta->>file", t.file);
+      if (error) throw new Error(`知识库过期片段查询失败：${error.message}`);
+      const rows = (data ?? []) as { id: string; source_hash: string }[];
+      const keep = new Set(t.keepHashes);
+      const staleIds = rows.filter((r) => !keep.has(r.source_hash)).map((r) => r.id);
+      if (staleIds.length > 0) {
+        const { error: de } = await client().from("kb_documents").delete().in("id", staleIds);
+        if (de) throw new Error(`知识库过期片段删除失败：${de.message}`);
+        removed += staleIds.length;
+      }
+    }
+    return removed;
   }
 }
 

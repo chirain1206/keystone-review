@@ -43,6 +43,7 @@ let totalFiles = 0;
 let totalChunks = 0;
 let totalUpserted = 0;
 let totalSkipped = 0;
+let totalRemoved = 0;
 const allErrors = [];
 for (const t of targets) {
   console.log(`[ingest-kb] 目录 ${t.label} → origin=${t.origin}, status=${t.status}`);
@@ -51,10 +52,11 @@ for (const t of targets) {
   totalChunks += stats.chunks;
   totalUpserted += stats.upserted;
   totalSkipped += stats.skipped;
+  totalRemoved += stats.removedStale;
   allErrors.push(...stats.errors);
 }
 console.log(
-  `[ingest-kb] 完成：文件 ${totalFiles}，片段 ${totalChunks}，入库/更新 ${totalUpserted}，跳过（幂等）${totalSkipped}，错误 ${allErrors.length}`,
+  `[ingest-kb] 完成：文件 ${totalFiles}，片段 ${totalChunks}，入库/更新 ${totalUpserted}，清理同源过期 ${totalRemoved}，跳过（幂等）${totalSkipped}，错误 ${allErrors.length}`,
 );
 for (const e of allErrors) console.error(`[ingest-kb] 错误：${e}`);
 

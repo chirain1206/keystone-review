@@ -179,6 +179,50 @@ describe("入库管线（幂等 + 双源目录）", () => {
     expect(stats.errors[0]).toContain("broken.md");
     expect(stats.upserted).toBe(2); // good.md 的两个 chunk 正常入库
   });
+
+  it("源文件更新后重入库：同源过期片段被自动清理（唯一 source_url）", async () => {
+    const tmpDir = path.join(dir, "update");
+    await fs.mkdir(tmpDir, { recursive: true });
+    const v1 = SAMPLE.replace("Combustion 期间 Fire Blast 与 Pyroblast 交替", "Combustion 期间 Fire Blast 与 Pyroblast 交替（旧版）");
+    const v2 = SAMPLE.replace("Combustion 期间 Fire Blast 与 Pyroblast 交替", "Combustion 期间 Fire Blast 与 Pyroblast 交替（新版）");
+    await fs.writeFile(path.join(tmpDir, "mage-fire.md"), v1, "utf8");
+
+    const first = await runIngest(tmpDir);
+    expect(first.errors).toEqual([]);
+    expect(first.removedStale).toBe(0); // 首轮无过期片段
+    const store = getKbStore();
+    expect(await store.count()).toBe(2);
+    expect((await store.list({})).some((r) => r.chunkText.includes("旧版"))).toBe(true);
+
+    // 修改文件内容后重入库 → 新哈希行入库、旧哈希行被清理
+    await fs.writeFile(path.join(tmpDir, "mage-fire.md"), v2, "utf8");
+    const second = await runIngest(tmpDir);
+    expect(second.errors).toEqual([]);
+    expect(second.removedStale).toBe(1); // 只有改动的那一节产生过期片段
+    expect(await store.count()).toBe(2);
+    expect((await store.list({})).some((r) => r.chunkText.includes("新版"))).toBe(true);
+    expect((await store.list({})).some((r) => r.chunkText.includes("旧版"))).toBe(false);
+  });
+
+  it("共享同一 source_url 的多个文件：单文件重入库不误删其他文件的片段", async () => {
+    const tmpDir = path.join(dir, "shared");
+    await fs.mkdir(tmpDir, { recursive: true });
+    const shared = (spec: string) => SAMPLE.replace("spec: Fire", `spec: ${spec}`);
+    await fs.writeFile(path.join(tmpDir, "tier-fire.md"), shared("Fire"), "utf8");
+    await fs.writeFile(path.join(tmpDir, "tier-arcane.md"), shared("Arcane"), "utf8");
+
+    await runIngest(tmpDir); // 首轮：两文件共 4 片段
+    const store = getKbStore();
+    expect(await store.count()).toBe(4);
+
+    // 只重入库其中一个文件 → 不得把另一个文件的片段当过期删掉
+    const tmpOne = path.join(dir, "shared-one");
+    await fs.mkdir(tmpOne, { recursive: true });
+    await fs.writeFile(path.join(tmpOne, "tier-fire.md"), shared("Fire"), "utf8");
+    const stats = await runIngest(tmpOne);
+    expect(stats.removedStale).toBe(0);
+    expect(await store.count()).toBe(4);
+  });
 });
 
 describe("初始知识库内容合规（T18）", () => {

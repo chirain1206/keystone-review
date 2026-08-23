@@ -21,6 +21,14 @@ export interface KbStore {
   search(query: KbSearchQuery, filters: KbSearchFilters, topK: number): Promise<KbHit[]>;
   /** 按 source_hash 幂等 upsert；返回写入条数。 */
   upsert(docs: KbDocument[]): Promise<number>;
+  /**
+   * 清理同一来源文件的过期片段：source_url + origin + file 归属下，source_hash 不在
+   * keepHashes 集合中的旧行物理删除。用于源文件更新后的重入库（新哈希的行已 upsert，
+   * 旧哈希残留）。返回实际删除条数。
+   */
+  deleteStaleChunks(
+    targets: { sourceUrl: string; origin: KbMeta["origin"]; file: string; keepHashes: string[] }[],
+  ): Promise<number>;
   /** 库中最新非 general 补丁（ACTIVE_PATCH 未配置时的缺省活跃补丁）。 */
   getActivePatch(): Promise<string | null>;
   count(): Promise<number>;

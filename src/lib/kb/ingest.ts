@@ -28,6 +28,8 @@ export interface IngestStats {
   chunks: number;
   upserted: number;
   skipped: number;
+  /** 本次清理的同源过期片段数（源文件更新后残留的旧哈希行）。 */
+  removedStale: number;
   errors: string[];
 }
 
@@ -222,7 +224,7 @@ export async function runIngest(
   sourcesDir: string,
   options: IngestOptions = { origin: "curated", status: "active" },
 ): Promise<IngestStats> {
-  const stats: IngestStats = { files: 0, chunks: 0, upserted: 0, skipped: 0, errors: [] };
+  const stats: IngestStats = { files: 0, chunks: 0, upserted: 0, skipped: 0, removedStale: 0, errors: [] };
   let entries: string[];
   try {
     entries = (await fs.readdir(sourcesDir)).filter((f) => f.endsWith(".md"));
@@ -231,6 +233,8 @@ export async function runIngest(
     return stats;
   }
   const allDocs: KbDocument[] = [];
+  // 同源分组：source_url|origin|file → 本次产出的哈希集合（用于过期片段精确清理）
+  const bySource = new Map<string, { sourceUrl: string; origin: KbMeta["origin"]; file: string; hashes: Set<string> }>();
 
   for (const entry of entries.sort()) {
     stats.files++;
@@ -242,20 +246,33 @@ export async function runIngest(
           ...c.meta,
           origin: options.origin,
           status: options.status,
+          file: entry, // 来源文件名：同源过期清理按 source_url+file 精确归属
         };
         // source_hash 含 origin/status：同一内容在 curated 与 inferred
-        // 两个目录互不覆盖（不同哈希、独立条目）。
+        // 两个目录互不覆盖（不同哈希、独立条目）。file 不参与哈希（文件名本身已是哈希输入）。
         const hashMeta: Record<string, string> = {
           ...parsed.frontmatter,
-          ...Object.fromEntries(Object.entries(finalMeta).filter(([, v]) => typeof v === "string")),
+          ...Object.fromEntries(
+            Object.entries(finalMeta).filter(([k, v]) => k !== "file" && typeof v === "string"),
+          ),
         };
+        const hash = computeSourceHash(entry, hashMeta, c.text);
         allDocs.push({
           id: randomUUID(),
           chunkText: c.text,
           meta: finalMeta,
-          sourceHash: computeSourceHash(entry, hashMeta, c.text),
+          sourceHash: hash,
           embedding: new Array(1024).fill(0), // 下方批量嵌入回填
         });
+        const key = `${finalMeta.source_url ?? ""}|${finalMeta.origin}|${entry}`;
+        const group = bySource.get(key) ?? {
+          sourceUrl: finalMeta.source_url ?? "",
+          origin: finalMeta.origin,
+          file: entry,
+          hashes: new Set<string>(),
+        };
+        group.hashes.add(hash);
+        bySource.set(key, group);
       }
     } catch (err) {
       stats.errors.push(err instanceof Error ? err.message : String(err));
@@ -277,5 +294,17 @@ export async function runIngest(
   const upserted = await getKbStore().upsert(allDocs);
   stats.upserted = upserted;
   stats.skipped = allDocs.length - upserted;
+
+  // 过期片段清理：按 source_url+origin+file 精确归属（不误伤共享链接的其他文件），
+  // 删除本次文件哈希集合之外的旧行。
+  const staleTargets = [...bySource.values()].map((g) => ({
+    sourceUrl: g.sourceUrl,
+    origin: g.origin,
+    file: g.file,
+    keepHashes: [...g.hashes],
+  }));
+  if (staleTargets.length > 0) {
+    stats.removedStale = await getKbStore().deleteStaleChunks(staleTargets);
+  }
   return stats;
 }

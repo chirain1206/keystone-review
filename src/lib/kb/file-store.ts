@@ -226,6 +226,40 @@ export class FileKbStore implements KbStore {
     });
     return removed;
   }
+
+  async deleteStaleChunks(
+    targets: { sourceUrl: string; origin: KbMeta["origin"]; file: string; keepHashes: string[] }[],
+  ): Promise<number> {
+    if (targets.length === 0) return 0;
+    let removed = 0;
+    await withLock(async () => {
+      const docs = await loadAll();
+      const staleIds = new Set<string>();
+      for (const t of targets) {
+        const keep = new Set(t.keepHashes);
+        for (const d of docs) {
+          if (
+            d.meta.source_url === t.sourceUrl &&
+            d.meta.origin === t.origin &&
+            d.meta.file === t.file &&
+            !keep.has(d.sourceHash)
+          ) {
+            staleIds.add(d.id);
+          }
+        }
+      }
+      if (staleIds.size === 0) return;
+      const remaining = docs.filter((d) => {
+        if (staleIds.has(d.id)) {
+          removed++;
+          return false;
+        }
+        return true;
+      });
+      await writeAll(remaining);
+    });
+    return removed;
+  }
 }
 
 /** 补丁号比较（"12.1" vs "12.10"：逐段数值比较）。 */
