@@ -82,6 +82,17 @@ export function isServer(): boolean {
   return typeof window === "undefined";
 }
 
+/**
+ * OpenAI 兼容服务基址规范化（SiliconFlow 等）：
+ * 文档给出的基址通常自带 /v1（如 https://api.siliconflow.cn/v1），
+ * 调用方直接拼 /embeddings、/audio/transcriptions 即可；本函数统一保证恰好一个 /v1 尾部。
+ * 坑：若配置值已带 /v1 再拼一次会得到 /v1/v1/... → 404（线上 ASR/嵌入服务踩过）。
+ */
+export function openAiStyleBaseUrl(base: string): string {
+  const trimmed = base.trim().replace(/\/+$/, "");
+  return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`;
+}
+
 // ---------- 生产环境 fail-fast（M-2） ----------
 
 /** 是否为生产环境（运行时动态判定，便于测试注入）。 */

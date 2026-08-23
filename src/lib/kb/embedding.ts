@@ -1,9 +1,10 @@
-import { envConfig } from "@/lib/env";
+import { envConfig, openAiStyleBaseUrl } from "@/lib/env";
 
 /**
  * 嵌入服务适配器（T15，FR-11）。
  *  - 有 EMBEDDING_API_KEY → SiliconFlow bge-m3（OpenAI 兼容协议：
- *    POST {EMBEDDING_BASE_URL}/v1/embeddings，输出 1024 维）
+ *    POST {EMBEDDING_BASE_URL}/embeddings（基址经 openAiStyleBaseUrl 规范化，恰好一个 /v1），
+ *    输出 1024 维）
  *  - 无密钥（开发/mock）→ 确定性伪向量（同文本恒得同向量，便于本地调试；
  *    生产 fail-fast 已由 validateProductionEnv 覆盖，禁止静默 mock）
  */
@@ -16,7 +17,7 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
   if (!envConfig.embeddingEnabled) {
     return texts.map((t) => mockEmbedding(t));
   }
-  const url = `${envConfig.embeddingBaseUrl.replace(/\/$/, "")}/v1/embeddings`;
+  const url = `${openAiStyleBaseUrl(envConfig.embeddingBaseUrl)}/embeddings`;
   const res = await fetch(url, {
     method: "POST",
     headers: {

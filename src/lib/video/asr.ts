@@ -1,10 +1,11 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { envConfig } from "@/lib/env";
+import { envConfig, openAiStyleBaseUrl } from "@/lib/env";
 
 /**
  * 语音转写适配器（SiliconFlow SenseVoiceSmall，OpenAI 兼容 transcriptions 协议）。
- *  - multipart POST {baseUrl}/v1/audio/transcriptions（file + model）
+ *  - multipart POST {baseUrl}/audio/transcriptions（file + model；基址经 openAiStyleBaseUrl
+ *    规范化恰好一个 /v1，避免与配置值自带 /v1 拼接成 /v1/v1 而 404）
  *  - 复用 SiliconFlow 密钥/域名（与 embedding 同一供应商 EMBEDDING_API_KEY/BASE_URL）
  *  - 仅支持 ≤20MB 音频：超限抛错提示分段（首版不自动切分）
  */
@@ -46,8 +47,8 @@ export async function transcribeAudioFile(audioPath: string, opts: AsrOptions = 
   if (!apiKey) {
     throw new Error("未配置 EMBEDDING_API_KEY（SiliconFlow），无法转写；请配置后重试");
   }
-  const baseUrl = (opts.baseUrl ?? envConfig.embeddingBaseUrl).replace(/\/$/, "");
-  const url = `${baseUrl}/v1/audio/transcriptions`;
+  const baseUrl = openAiStyleBaseUrl(opts.baseUrl ?? envConfig.embeddingBaseUrl);
+  const url = `${baseUrl}/audio/transcriptions`;
 
   const bytes = await fs.readFile(audioPath);
   const form = new FormData();
