@@ -59,8 +59,9 @@ export async function fetchVideoTitle(url: string, browser?: string): Promise<st
 
 /** 抓取字幕并转为纯文本；无字幕/失败返回 null。 */
 export async function fetchSubtitles(url: string, opts: YtDlpBrowserOptions): Promise<string | null> {
-  await fs.mkdir(opts.workDir, { recursive: true });
   const outDir = path.join(opts.workDir, "subs");
+  // 清理上一次残留：避免旧视频的字幕文件被误当作本次结果（线上踩坑：旧音频被误转写）
+  await fs.rm(outDir, { recursive: true, force: true });
   await fs.mkdir(outDir, { recursive: true });
   try {
     await spawnYtDlp([
@@ -90,8 +91,9 @@ export async function fetchSubtitles(url: string, opts: YtDlpBrowserOptions): Pr
 
 /** 下载音频（优先 m4a），返回本地文件路径。 */
 export async function downloadAudio(url: string, opts: YtDlpBrowserOptions): Promise<string> {
-  await fs.mkdir(opts.workDir, { recursive: true });
   const outDir = path.join(opts.workDir, "audio");
+  // 清理上一次残留：防止旧音频文件被当成本次视频的音频转写（线上踩坑：转写出了别的视频内容）
+  await fs.rm(outDir, { recursive: true, force: true });
   await fs.mkdir(outDir, { recursive: true });
   // 优先 m4a 音频（体积小、无需 ffmpeg 后处理），否则取最佳音频
   await spawnYtDlp([
