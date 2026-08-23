@@ -41,6 +41,7 @@ const spec = flag("spec", argv);
 const patch = flag("patch", argv);
 const up = flag("up", argv);
 const browser = flag("browser", argv);
+const workDir = flag("work-dir", argv);
 
 if (!url || !cls || !spec || !patch) {
   console.error(
@@ -63,7 +64,7 @@ const input = {
   up,
   browser,
   sourcesDir: path.join(root, "kb", "sources"),
-  workDir: path.join(root, ".data", "video-work"),
+  workDir: workDir ? path.resolve(workDir) : path.join(root, ".data", "video-work"),
 };
 
 const deps = {
