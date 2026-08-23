@@ -89,16 +89,15 @@ export async function fetchSubtitles(url: string, opts: YtDlpBrowserOptions): Pr
   return text.trim() || null;
 }
 
-/** 下载音频（优先 m4a），返回本地文件路径。 */
+/** 下载音频（优先最小的 m4a——ASR 对码率不敏感，小码率更省配额且低于转写体积上限），返回本地文件路径。 */
 export async function downloadAudio(url: string, opts: YtDlpBrowserOptions): Promise<string> {
   const outDir = path.join(opts.workDir, "audio");
   // 清理上一次残留：防止旧音频文件被当成本次视频的音频转写（线上踩坑：转写出了别的视频内容）
   await fs.rm(outDir, { recursive: true, force: true });
   await fs.mkdir(outDir, { recursive: true });
-  // 优先 m4a 音频（体积小、无需 ffmpeg 后处理），否则取最佳音频
   await spawnYtDlp([
     "-f",
-    "bestaudio[ext=m4a]/bestaudio",
+    "worstaudio[ext=m4a]/bestaudio[ext=m4a]/worstaudio/bestaudio",
     "--no-playlist",
     "-o",
     path.join(outDir, "audio.%(ext)s"),

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { envConfig, openAiStyleBaseUrl } from "@/lib/env";
@@ -7,8 +8,81 @@ import { envConfig, openAiStyleBaseUrl } from "@/lib/env";
  *  - multipart POST {baseUrl}/audio/transcriptions（file + model；基址经 openAiStyleBaseUrl
  *    规范化恰好一个 /v1，避免与配置值自带 /v1 拼接成 /v1/v1 而 404）
  *  - 复用 SiliconFlow 密钥/域名（与 embedding 同一供应商 EMBEDDING_API_KEY/BASE_URL）
- *  - 仅支持 ≤20MB 音频：超限抛错提示分段（首版不自动切分）
+ *  - 单文件仅支持 ≤20MB；超限由 transcribeAudioAutoSplit 用 ffmpeg 切段后逐段转写再拼接
  */
+
+export const ASR_MAX_BYTES = 20 * 1024 * 1024;
+
+/** ffmpeg 切段时长（秒）：14 分钟 ≈ 最高码率 95kbps 下约 10MB/段，远低于 20MB 上限。 */
+export const SEGMENT_SECONDS = 840;
+
+/** 是否需要切分（纯函数，便于单测）。 */
+export function needsAudioSplit(sizeBytes: number): boolean {
+  return sizeBytes > ASR_MAX_BYTES;
+}
+
+/** 语音转写自动切分：≤20MB 直接转写；超限 ffmpeg 按段切分后逐段转写再拼接。 */
+export async function transcribeAudioAutoSplit(audioPath: string, opts: AsrOptions = {}): Promise<string> {
+  const stat = await fs.stat(audioPath).catch(() => {
+    throw new Error(`音频文件不存在：${audioPath}`);
+  });
+  if (!needsAudioSplit(stat.size)) {
+    return transcribeAudioFile(audioPath, opts);
+  }
+  const segments = await splitAudioSegments(audioPath);
+  const parts: string[] = [];
+  for (const seg of segments) {
+    const text = await transcribeAudioFile(seg, opts);
+    if (text.trim()) parts.push(text.trim());
+  }
+  const joined = parts.join("\n").trim();
+  if (!joined) throw new Error("音频分段转写结果为空（可能音频无声或格式不支持）");
+  return joined;
+}
+
+/** 用 ffmpeg 把长音频切成 SEGMENT_SECONDS 一段（-c copy 无重编码），返回段文件路径。 */
+async function splitAudioSegments(audioPath: string): Promise<string[]> {
+  const outDir = path.join(path.dirname(audioPath), "segments");
+  await fs.rm(outDir, { recursive: true, force: true });
+  await fs.mkdir(outDir, { recursive: true });
+  const outPattern = path.join(outDir, "seg-%03d.m4a");
+  await spawnFfmpeg([
+    "-i",
+    audioPath,
+    "-f",
+    "segment",
+    "-segment_time",
+    String(SEGMENT_SECONDS),
+    "-c",
+    "copy",
+    outPattern,
+  ]);
+  const files = (await fs.readdir(outDir)).filter((f) => /\.m4a$/i.test(f)).sort();
+  if (files.length === 0) throw new Error("音频切分未生成任何片段（ffmpeg 执行异常）");
+  return files.map((f) => path.join(outDir, f));
+}
+
+function spawnFfmpeg(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
+    let err = "";
+    child.stderr.on("data", (d) => (err += d));
+    child.on("error", (e) => {
+      if ((e as NodeJS.ErrnoException).code === "EPERM") {
+        reject(new Error("当前环境禁止子进程（如 DSH 沙箱），无法调用 ffmpeg 切分长音频。"));
+      } else {
+        reject(e);
+      }
+    });
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffmpeg 退出码 ${code}：${err.slice(-300)}`));
+      } else {
+        resolve();
+      }
+    });
+  });
+}
 
 export const ASR_MAX_BYTES = 20 * 1024 * 1024;
 

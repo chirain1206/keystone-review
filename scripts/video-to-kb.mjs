@@ -24,7 +24,7 @@ process.on("uncaughtException", (err) => {
 
 const { runVideoToKb, searchExistingKnowledge } = await import("../src/lib/video/pipeline.ts");
 const { fetchVideoTitle, fetchSubtitles, downloadAudio } = await import("../src/lib/video/ytdlp.ts");
-const { transcribeAudioFile } = await import("../src/lib/video/asr.ts");
+const { transcribeAudioAutoSplit } = await import("../src/lib/video/asr.ts");
 const { extractKnowledge } = await import("../src/lib/video/extract.ts");
 
 // ---- 参数解析 ----
@@ -70,7 +70,7 @@ const deps = {
   fetchTitle: (u, b) => fetchVideoTitle(u, b),
   fetchSubtitles: (u, o) => fetchSubtitles(u, o),
   downloadAudio: (u, o) => downloadAudio(u, o),
-  transcribe: (audioPath) => transcribeAudioFile(audioPath),
+  transcribe: (audioPath) => transcribeAudioAutoSplit(audioPath),
   extractKnowledge,
   searchExisting: searchExistingKnowledge,
   now: () => new Date(),
