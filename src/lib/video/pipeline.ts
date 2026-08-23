@@ -76,7 +76,9 @@ export async function searchExistingKnowledge(query: string, input: VideoKbInput
 }
 
 function slugSpec(spec: string): string {
-  return spec.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  const s = spec.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  // "*"（全专精通用）在 frontmatter 保留原值，但 Windows 文件名不允许 *，映射为 all
+  return s === "*" ? "all" : s;
 }
 
 function timestamp(d: Date): string {
